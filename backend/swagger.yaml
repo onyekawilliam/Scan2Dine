@@ -1,0 +1,71 @@
+openapi: 3.0.0
+info:
+  title: Scan2Dine API
+  description: Enterprise REST API for the Scan2Dine QR Ordering Platform
+  version: 1.0.0
+servers:
+  - url: http://localhost:5000/api
+    description: Local server
+paths:
+  /auth/register:
+    post:
+      summary: Register a new restaurant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                restaurant_name:
+                  type: string
+                owner_name:
+                  type: string
+                email:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '201':
+          description: Created
+  /auth/login:
+    post:
+      summary: Login restaurant
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Success
+  /public/menu/{restaurant_slug}:
+    get:
+      summary: Get public menu for a restaurant
+      parameters:
+        - in: path
+          name: restaurant_slug
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Returns restaurant details and categories with items
+  /orders:
+    get:
+      summary: Get restaurant orders (Protected)
+      responses:
+        '200':
+          description: Success
+  /analytics/dashboard:
+    get:
+      summary: Get dashboard analytics (Protected)
+      responses:
+        '200':
+          description: Success
