@@ -1,6 +1,7 @@
 const Category = require("../Models/categorymodel");
 const MenuItem = require("../Models/menumodel");
 const { isObjectId, fail, serverError, notFound } = require("../utils/http");
+const { isConfigured, createUploadSignature, isTrustedImageUrl, deleteImage } = require("../utils/cloudinary");
 
 // Every query below is scoped by req.restaurant.id (taken from the verified token,
 // never from the request body or URL), so a restaurant can only touch its own data.
@@ -108,12 +109,24 @@ const getMenuItems = async (req, res) => {
 const categoryBelongsToRestaurant = (categoryId, restaurantId) =>
   Category.exists({ _id: categoryId, restaurant_id: restaurantId });
 
+const invalidImage = (res) =>
+  fail(res, 400, "INVALID_IMAGE", "That image was not uploaded through Scan2Dine. Please upload the photo again.");
+
+// @route   GET /api/menu/upload-signature
+const getUploadSignature = (req, res) => {
+  if (!isConfigured()) {
+    return fail(res, 503, "UPLOADS_NOT_CONFIGURED", "Photo uploads are not set up on this server yet.");
+  }
+  res.json({ success: true, data: createUploadSignature(req.restaurant.id) });
+};
+
 // @route   POST /api/menu/items
 const createMenuItem = async (req, res) => {
   try {
     if (!(await categoryBelongsToRestaurant(req.body.category_id, req.restaurant.id))) {
       return fail(res, 400, "INVALID_CATEGORY", "That category does not exist");
     }
+    if (!isTrustedImageUrl(req.body.image_url, req.restaurant.id)) return invalidImage(res);
 
     const menuItem = await MenuItem.create({ ...req.body, restaurant_id: req.restaurant.id });
     res.status(201).json({ success: true, message: "Menu item created successfully", data: menuItem });
@@ -131,12 +144,22 @@ const updateMenuItem = async (req, res) => {
       return fail(res, 400, "INVALID_CATEGORY", "That category does not exist");
     }
 
+    const changingImage = "image_url" in req.body;
+    if (changingImage && !isTrustedImageUrl(req.body.image_url, req.restaurant.id)) return invalidImage(res);
+
+    // Remember the old photo so it can be removed from Cloudinary if it was replaced or cleared.
+    const before = changingImage
+      ? await MenuItem.findOne({ _id: req.params.id, restaurant_id: req.restaurant.id }).select("image_url")
+      : null;
+
     const menuItem = await MenuItem.findOneAndUpdate(
       { _id: req.params.id, restaurant_id: req.restaurant.id },
       { $set: req.body },
       { new: true, runValidators: true }
     ).populate("category_id", "name");
     if (!menuItem) return notFound(res, "Menu item");
+
+    if (before?.image_url && before.image_url !== menuItem.image_url) deleteImage(before.image_url);
 
     res.json({ success: true, message: "Menu item updated successfully", data: menuItem });
   } catch (error) {
@@ -150,6 +173,7 @@ const deleteMenuItem = async (req, res) => {
     if (!isObjectId(req.params.id)) return notFound(res, "Menu item");
     const menuItem = await MenuItem.findOneAndDelete({ _id: req.params.id, restaurant_id: req.restaurant.id });
     if (!menuItem) return notFound(res, "Menu item");
+    if (menuItem.image_url) deleteImage(menuItem.image_url);
     res.json({ success: true, message: "Menu item deleted" });
   } catch (error) {
     serverError(res, error);
@@ -162,6 +186,7 @@ module.exports = {
   updateCategory,
   reorderCategories,
   deleteCategory,
+  getUploadSignature,
   getMenuItems,
   createMenuItem,
   updateMenuItem,

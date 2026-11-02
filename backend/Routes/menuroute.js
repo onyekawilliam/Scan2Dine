@@ -18,6 +18,8 @@ router.route("/categories").get(c.getCategories).post(validate(categorySchema), 
 router.put("/categories/reorder", validate(categoryReorderSchema), c.reorderCategories);
 router.route("/categories/:id").put(validate(categoryUpdateSchema), c.updateCategory).delete(c.deleteCategory);
 
+router.get("/upload-signature", c.getUploadSignature);
+
 router.route("/items").get(c.getMenuItems).post(validate(menuItemSchema), c.createMenuItem);
 router.route("/items/:id").put(validate(menuItemUpdateSchema), c.updateMenuItem).delete(c.deleteMenuItem);
 
