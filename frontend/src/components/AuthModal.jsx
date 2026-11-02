@@ -1,153 +1,154 @@
-import React, { useState } from 'react';
-import { X, Mail, Lock, User, Phone, Store } from 'lucide-react';
-import Logo from './Logo';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Eye, EyeOff, X } from 'lucide-react';
+import Logo from './Logo';
 import api from '../utils/api';
 
+const EMPTY = { restaurant_name: '', owner_name: '', email: '', password: '', phone: '' };
+
 const AuthModal = ({ isOpen, onClose, initialMode = 'signin' }) => {
+  const navigate = useNavigate();
   const [isSignIn, setIsSignIn] = useState(initialMode === 'signin');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const navigate = useNavigate();
+  const [error, setError] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [form, setForm] = useState(EMPTY);
+  const firstField = useRef(null);
 
-  const [formData, setFormData] = useState({
-    restaurant_name: '',
-    owner_name: '',
-    email: '',
-    password: '',
-    phone: ''
-  });
+  // Each time the box opens it starts in the mode that was asked for (sign in or create account).
+  useEffect(() => {
+    if (!isOpen) return undefined;
+    setIsSignIn(initialMode === 'signin');
+    setError('');
+    setShowPassword(false);
+    const focusTimer = setTimeout(() => firstField.current?.focus(), 50);
+    const onKey = (e) => e.key === 'Escape' && onClose();
+    document.addEventListener('keydown', onKey);
+    return () => {
+      clearTimeout(focusTimer);
+      document.removeEventListener('keydown', onKey);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, initialMode]);
 
   if (!isOpen) return null;
 
-  const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
+  const set = (key) => (e) => setForm((prev) => ({ ...prev, [key]: e.target.value }));
+
+  const switchMode = () => {
+    setIsSignIn((v) => !v);
+    setError('');
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (loading) return;
     setLoading(true);
-    setError(null);
-    
+    setError('');
     try {
-      const endpoint = isSignIn ? '/auth/login' : '/auth/register';
-      const payload = isSignIn 
-        ? { email: formData.email, password: formData.password }
-        : formData;
-
-      const response = await api.post(endpoint, payload);
-      
-      if (response.data.success) {
-        localStorage.setItem('token', response.data.data.token);
-        localStorage.setItem('user', JSON.stringify(response.data.data.user));
+      const payload = isSignIn
+        ? { email: form.email, password: form.password }
+        : { ...form, phone: form.phone.trim() || undefined };
+      const res = await api.post(isSignIn ? '/auth/login' : '/auth/register', payload);
+      if (res.data.success) {
+        localStorage.setItem('token', res.data.data.token);
+        localStorage.setItem('user', JSON.stringify(res.data.data.user));
         onClose();
         navigate('/dashboard');
       }
     } catch (err) {
-      setError(err.response?.data?.message || err.response?.data?.error?.message || "Authentication failed");
+      setError(
+        err.response?.data?.error?.message ||
+          err.response?.data?.message ||
+          'We could not reach the server. Check your connection and try again.'
+      );
     } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      {/* Backdrop */}
-      <div 
-        className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity"
-        onClick={onClose}
-      ></div>
+  const title = isSignIn ? 'Sign in to Scan2Dine' : 'Create your account';
 
-      {/* Modal */}
-      <div className="relative w-full max-w-md bg-white/95 backdrop-blur-xl rounded-[2rem] shadow-2xl overflow-hidden animate-fade-in-up border border-white/50">
-        
-        <button 
-          onClick={onClose}
-          className="absolute top-6 right-6 p-2 bg-slate-100 text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded-full transition-colors z-10"
-        >
-          <X size={20} />
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+      <button type="button" aria-label="Close" className="absolute inset-0 bg-slate-900/50" onClick={onClose} />
+
+      <div className="animate-fade-in-up relative max-h-full w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-6 shadow-xl sm:rounded-2xl sm:p-8">
+        <button type="button" onClick={onClose} aria-label="Close" className="absolute right-4 top-4 rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+          <X size={18} />
         </button>
 
-        <div className="p-8 text-center border-b border-slate-100 bg-gradient-to-br from-primary/5 to-secondary/5">
-          <div className="flex justify-center mb-4">
-             <Logo size="hero" />
-          </div>
-          <h2 className="text-2xl font-bold text-slate-800">
-            {isSignIn ? 'Welcome Back' : 'Join Scan2Dine'}
-          </h2>
-          <p className="text-slate-500 text-sm mt-2">
-            {isSignIn ? 'Enter your details to access your dashboard.' : 'Create an account to start managing your restaurant.'}
+        <div className="mb-6">
+          <Logo />
+          <h2 id="auth-title" className="mt-4 text-xl font-semibold text-slate-900">{title}</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            {isSignIn ? 'Welcome back. Enter your details to open your dashboard.' : 'Set up your restaurant in a few minutes.'}
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-8 space-y-5">
-          {error && (
-            <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm border border-red-100 text-center">
-              {error}
-            </div>
-          )}
-
+        <form onSubmit={handleSubmit} className="space-y-4">
           {!isSignIn && (
             <>
-              <div className="space-y-4">
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Store size={18} className="text-slate-400" />
-                  </div>
-                  <input name="restaurant_name" value={formData.restaurant_name} onChange={handleChange} type="text" required placeholder="Restaurant Name" className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-all" />
+              <div>
+                <label htmlFor="restaurant_name" className="label">Restaurant name</label>
+                <input ref={firstField} id="restaurant_name" required minLength={3} maxLength={100} autoComplete="organization" value={form.restaurant_name} onChange={set('restaurant_name')} className="input" />
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="owner_name" className="label">Your name</label>
+                  <input id="owner_name" required minLength={2} maxLength={50} autoComplete="name" value={form.owner_name} onChange={set('owner_name')} className="input" />
                 </div>
-                
-                <div className="flex gap-4">
-                   <div className="relative flex-1">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <User size={18} className="text-slate-400" />
-                    </div>
-                    <input name="owner_name" value={formData.owner_name} onChange={handleChange} type="text" required placeholder="Owner Name" className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-all" />
-                  </div>
-                   <div className="relative flex-1">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                      <Phone size={18} className="text-slate-400" />
-                    </div>
-                    <input name="phone" value={formData.phone} onChange={handleChange} type="tel" placeholder="Phone" className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-all" />
-                  </div>
+                <div>
+                  <label htmlFor="phone" className="label">Phone <span className="font-normal text-slate-400">(optional)</span></label>
+                  <input id="phone" type="tel" autoComplete="tel" value={form.phone} onChange={set('phone')} className="input" />
                 </div>
               </div>
             </>
           )}
 
-          <div className="space-y-4">
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <Mail size={18} className="text-slate-400" />
-              </div>
-              <input name="email" value={formData.email} onChange={handleChange} type="email" required placeholder="Email Address" className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-all" />
-            </div>
-            
-            <div className="relative">
-              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <Lock size={18} className="text-slate-400" />
-              </div>
-              <input name="password" value={formData.password} onChange={handleChange} type="password" required placeholder="Password" className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary outline-none transition-all" />
-            </div>
+          <div>
+            <label htmlFor="email" className="label">Email</label>
+            <input ref={isSignIn ? firstField : undefined} id="email" type="email" required autoComplete="email" value={form.email} onChange={set('email')} className="input" />
           </div>
 
-          <button disabled={loading} type="submit" className="w-full bg-gradient-to-r from-primary to-secondary text-white py-3.5 rounded-xl font-bold shadow-lg shadow-primary/30 hover:shadow-primary/50 transform hover:-translate-y-0.5 transition-all duration-300 disabled:opacity-70 disabled:cursor-not-allowed">
-            {loading ? 'Processing...' : (isSignIn ? 'Sign In' : 'Create Account')}
+          <div>
+            <label htmlFor="password" className="label">Password</label>
+            <div className="relative">
+              <input
+                id="password"
+                type={showPassword ? 'text' : 'password'}
+                required
+                minLength={isSignIn ? undefined : 8}
+                autoComplete={isSignIn ? 'current-password' : 'new-password'}
+                value={form.password}
+                onChange={set('password')}
+                className="input pr-11"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1.5 text-slate-400 hover:text-slate-700"
+              >
+                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+            {!isSignIn && <p className="hint">At least 8 characters, with a letter and a number.</p>}
+          </div>
+
+          {error && <p role="alert" className="alert-error">{error}</p>}
+
+          <button type="submit" disabled={loading} className="btn btn-primary btn-lg w-full">
+            {loading ? 'Please wait…' : isSignIn ? 'Sign in' : 'Create account'}
           </button>
         </form>
 
-        <div className="px-8 pb-8 text-center">
-          <p className="text-slate-500 text-sm">
-            {isSignIn ? "Don't have an account? " : "Already have an account? "}
-            <button 
-              onClick={() => { setIsSignIn(!isSignIn); setError(null); }} 
-              className="text-accent font-bold hover:underline"
-            >
-              {isSignIn ? 'Sign Up' : 'Sign In'}
-            </button>
-          </p>
-        </div>
-
+        <p className="mt-6 text-center text-sm text-slate-500">
+          {isSignIn ? 'New to Scan2Dine? ' : 'Already have an account? '}
+          <button type="button" onClick={switchMode} className="font-semibold text-primary hover:underline">
+            {isSignIn ? 'Create an account' : 'Sign in'}
+          </button>
+        </p>
       </div>
     </div>
   );

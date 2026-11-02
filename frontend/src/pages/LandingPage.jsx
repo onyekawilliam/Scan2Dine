@@ -1,16 +1,28 @@
 import React, { useState, useEffect } from 'react';
-import { QrCode, Smartphone, LineChart, ArrowRight, Menu } from 'lucide-react';
-import { Link, useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
+import { ArrowRight, BarChart3, ChefHat, ImagePlus, QrCode, ScanLine, Smartphone, UtensilsCrossed } from 'lucide-react';
 import PhoneMockup from '../components/PhoneMockup';
 import FeatureCard from '../components/FeatureCard';
 import Logo from '../components/Logo';
 import AuthModal from '../components/AuthModal';
 
+const STEPS = [
+  { icon: UtensilsCrossed, title: 'Build your menu', text: 'Add categories and dishes with prices, descriptions and photos.' },
+  { icon: QrCode, title: 'Print your QR code', text: 'Download it, print it, and put it on your tables.' },
+  { icon: ChefHat, title: 'Receive orders', text: 'Guests scan, order from their phone, and you see it instantly.' },
+];
+
+const FEATURES = [
+  { icon: Smartphone, title: 'Works on any phone', description: 'Guests open your menu in their browser. No app to download, no account to create.' },
+  { icon: ChefHat, title: 'Live order board', description: 'New orders appear the moment they are placed, with a kitchen display for your staff.' },
+  { icon: ImagePlus, title: 'Menu you control', description: 'Change prices, mark dishes sold out and upload photos. Updates show straight away.' },
+  { icon: BarChart3, title: 'Simple analytics', description: 'See sales over the last week and which dishes sell best.' },
+];
+
 function LandingPage() {
+  const location = useLocation();
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState('signin');
-
-  const location = useLocation();
 
   const openAuth = (mode) => {
     setAuthMode(mode);
@@ -23,125 +35,96 @@ function LandingPage() {
   }, [location.state]);
 
   return (
-    <div className="min-h-screen bg-slate-50 relative overflow-hidden font-sans">
-      {/* Background Gradients & Particles */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-         <div className="absolute top-1/4 left-1/4 w-4 h-4 bg-accent/20 rounded-full animate-float" style={{ animationDelay: '0s' }}></div>
-         <div className="absolute top-1/3 right-1/4 w-6 h-6 bg-primary/20 rounded-full animate-float" style={{ animationDelay: '1s' }}></div>
-         <div className="absolute bottom-1/4 left-1/3 w-8 h-8 bg-secondary/20 rounded-full animate-float" style={{ animationDelay: '2s' }}></div>
-      </div>
-      
-      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-primary/20 rounded-full blur-[120px] pointer-events-none"></div>
-      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-secondary/20 rounded-full blur-[120px] pointer-events-none"></div>
-      
-      {/* Navbar */}
-      <nav className="relative z-10 px-6 lg:px-12 py-6">
-        <div className="max-w-7xl mx-auto flex justify-between items-center bg-white/60 backdrop-blur-md px-6 py-4 rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.05)] border border-white/40">
-          <div className="flex items-center gap-3">
-            <Logo size="nav" />
-            <span className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary tracking-tight">Scan2Dine</span>
+    <div className="min-h-screen bg-white">
+      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/90 backdrop-blur">
+        <nav className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6" aria-label="Main">
+          <Logo wordmark />
+          <div className="hidden items-center gap-8 text-sm font-medium text-slate-600 md:flex">
+            <a href="#how" className="hover:text-slate-900">How it works</a>
+            <a href="#features" className="hover:text-slate-900">Features</a>
           </div>
-          
-          <div className="hidden md:flex items-center gap-8 font-medium text-slate-600">
-            <a href="#features" className="hover:text-primary transition-colors">Features</a>
-            <Link to="/dashboard" className="hover:text-primary transition-colors">Admin Demo</Link>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => openAuth('signin')} className="btn btn-ghost">Sign in</button>
+            <button type="button" onClick={() => openAuth('signup')} className="btn btn-primary">Create account</button>
           </div>
+        </nav>
+      </header>
 
-          <div className="hidden md:flex items-center gap-4">
-            <button onClick={() => openAuth('signin')} className="text-slate-600 font-medium hover:text-primary transition-colors px-4 py-2">
-              Sign In
-            </button>
-            <button onClick={() => openAuth('signup')} className="bg-gradient-to-r from-primary to-secondary text-white px-6 py-2.5 rounded-xl font-medium shadow-lg shadow-primary/30 hover:shadow-primary/50 hover:scale-[1.02] transition-all duration-300">
-              Get Started Free
-            </button>
-          </div>
-          
-          <div className="md:hidden">
-            <button className="text-slate-800 p-2">
-               <Menu size={24} />
-            </button>
-          </div>
-        </div>
-      </nav>
-
-      {/* Hero Section */}
-      <main className="relative z-10 px-6 lg:px-12 pt-12 pb-24 max-w-7xl mx-auto">
-        <div className="grid lg:grid-cols-2 gap-16 items-center">
-          
-          {/* Left Column - Copy */}
-          <div className="space-y-8 animate-fade-in-up">
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/80 border border-slate-200 shadow-sm text-sm font-medium text-slate-700">
-              <span className="flex h-2 w-2 relative">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-accent"></span>
-              </span>
-              Contactless QR Menus
-            </div>
-            
-            <h1 className="text-5xl lg:text-7xl font-extrabold text-slate-900 leading-[1.1] tracking-tight">
-              Transform Your <br />
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-secondary">
-                Restaurant
-              </span> Experience
-            </h1>
-            
-            <p className="text-lg lg:text-xl text-slate-600 leading-relaxed max-w-xl">
-              Elevate your dining service with interactive digital menus, seamless mobile ordering, and real-time analytics. Fast, intuitive, and contactless.
+      <main>
+        {/* Hero */}
+        <section className="mx-auto grid max-w-6xl items-center gap-12 px-4 py-16 sm:px-6 lg:grid-cols-2 lg:py-24">
+          <div className="animate-fade-in-up">
+            <p className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600">
+              <ScanLine size={14} className="text-primary" aria-hidden="true" /> QR menus and ordering for restaurants
             </p>
-            
-            <div className="flex flex-col sm:flex-row gap-4 pt-4">
-              <button onClick={() => openAuth('signup')} className="flex items-center justify-center gap-2 bg-gradient-to-r from-primary to-secondary text-white px-8 py-4 rounded-xl font-semibold shadow-xl shadow-primary/30 hover:shadow-primary/50 hover:scale-[1.02] transition-all duration-300 text-lg">
-                Get Started Free
-                <ArrowRight size={20} />
+            <h1 className="mt-5 text-4xl font-semibold tracking-tight text-slate-900 sm:text-5xl">
+              Digital menus and table ordering for your restaurant.
+            </h1>
+            <p className="mt-5 max-w-xl text-lg leading-relaxed text-slate-600">
+              Scan2Dine gives your restaurant a digital menu and a live order board. Guests scan a QR code at the table, order from their phone, and your kitchen sees it straight away.
+            </p>
+            <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+              <button type="button" onClick={() => openAuth('signup')} className="btn btn-primary btn-lg">
+                Create your account <ArrowRight size={18} />
               </button>
-              <button onClick={() => openAuth('signin')} className="flex items-center justify-center gap-2 bg-white text-slate-800 border border-slate-200 px-8 py-4 rounded-xl font-semibold shadow-[0_8px_32px_rgba(0,0,0,0.05)] hover:shadow-lg transition-all duration-300 text-lg">
-                Sign In
-              </button>
+              <button type="button" onClick={() => openAuth('signin')} className="btn btn-secondary btn-lg">Sign in</button>
             </div>
           </div>
 
-          {/* Right Column - Mockup */}
-          <div className="relative flex justify-center lg:justify-end animate-fade-in-up" style={{ animationDelay: '200ms' }}>
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[120%] h-[120%] bg-gradient-to-tr from-primary/10 to-accent/20 rounded-full blur-[80px] -z-10"></div>
+          <div className="animate-fade-in-up flex justify-center lg:justify-end" style={{ animationDelay: '120ms' }}>
             <PhoneMockup />
           </div>
-        </div>
+        </section>
 
-        {/* Features Section */}
-        <div id="features" className="mt-32">
-          <div className="text-center mb-16 space-y-4">
-            <h2 className="text-3xl lg:text-4xl font-bold text-slate-900">Everything you need to grow</h2>
-            <p className="text-slate-600 max-w-2xl mx-auto text-lg">Powerful features designed to increase revenue and improve customer satisfaction.</p>
+        {/* How it works */}
+        <section id="how" className="border-y border-slate-200 bg-slate-50 py-16 sm:py-20">
+          <div className="mx-auto max-w-6xl px-4 sm:px-6">
+            <h2 className="text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">How it works</h2>
+            <p className="mt-2 max-w-2xl text-slate-600">From sign-up to your first order in three steps.</p>
+            <ol className="mt-10 grid gap-6 md:grid-cols-3">
+              {STEPS.map((step, i) => (
+                <li key={step.title} className="card card-pad">
+                  <div className="flex items-center gap-3">
+                    <span className="grid size-8 place-items-center rounded-full bg-primary text-sm font-semibold text-white">{i + 1}</span>
+                    <step.icon size={20} className="text-slate-400" aria-hidden="true" />
+                  </div>
+                  <h3 className="mt-4 text-base font-semibold text-slate-900">{step.title}</h3>
+                  <p className="mt-1.5 text-sm leading-relaxed text-slate-600">{step.text}</p>
+                </li>
+              ))}
+            </ol>
           </div>
-          
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8">
-             <FeatureCard 
-              icon={QrCode}
-              title="Easy QR Generation"
-              description="Generate beautiful, scannable QR codes for your tables instantly."
-              delay={0}
-            />
-            <FeatureCard 
-              icon={Smartphone}
-              title="Mobile-First Design"
-              description="A beautiful, app-like experience right in the customer's mobile browser."
-              delay={100}
-            />
-            <FeatureCard 
-              icon={LineChart}
-              title="Real-time Analytics"
-              description="Track popular items and revenue trends with an intuitive dashboard."
-              delay={200}
-            />
-            <FeatureCard 
-              icon={Menu}
-              title="Easy Management"
-              description="Update menu items, prices, and availability in real-time."
-              delay={300}
-            />
+        </section>
+
+        {/* Features */}
+        <section id="features" className="py-16 sm:py-20">
+          <div className="mx-auto max-w-6xl px-4 sm:px-6">
+            <h2 className="text-2xl font-semibold tracking-tight text-slate-900 sm:text-3xl">What you get</h2>
+            <p className="mt-2 max-w-2xl text-slate-600">Everything you need to take orders at the table, and nothing you do not.</p>
+            <div className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+              {FEATURES.map((feature) => <FeatureCard key={feature.title} {...feature} />)}
+            </div>
           </div>
-        </div>
+        </section>
+
+        {/* Closing call to action */}
+        <section className="px-4 pb-16 sm:px-6 sm:pb-24">
+          <div className="mx-auto max-w-6xl rounded-2xl bg-slate-900 px-6 py-12 text-center sm:px-12">
+            <h2 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">Ready to put your menu on the table?</h2>
+            <p className="mx-auto mt-3 max-w-xl text-slate-300">Create an account, add your menu and print your first QR code today.</p>
+            <button type="button" onClick={() => openAuth('signup')} className="btn btn-lg mt-8 bg-white text-slate-900 hover:bg-slate-100">
+              Create your account <ArrowRight size={18} />
+            </button>
+          </div>
+        </section>
       </main>
+
+      <footer className="border-t border-slate-200 py-8">
+        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-4 text-sm text-slate-500 sm:flex-row sm:px-6">
+          <Logo wordmark />
+          <p>© {new Date().getFullYear()} Scan2Dine</p>
+        </div>
+      </footer>
 
       <AuthModal isOpen={isAuthOpen} onClose={() => setIsAuthOpen(false)} initialMode={authMode} />
     </div>

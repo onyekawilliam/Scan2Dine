@@ -1,161 +1,141 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Save, ChefHat } from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import { ArrowLeft } from 'lucide-react';
 import api from '../utils/api';
+import { errorMessage } from '../utils/format';
+import ImageUpload from '../components/ImageUpload';
+import PageHeader from '../components/ui/PageHeader';
+import { useToast } from '../components/ui/toastContext';
+
+const list = (text) => text.split(',').map((s) => s.trim()).filter(Boolean);
 
 function AddMenuItem() {
   const navigate = useNavigate();
-  const [categories, setCategories] = useState([]);
-  const [loading, setLoading] = useState(false);
-  
-  const [formData, setFormData] = useState({
-    name: '',
-    category_id: '',
-    description: '',
-    price: '',
-    emoji_icon: '🍽️',
-    allergens: '',
-    dietary_tags: ''
+  const toast = useToast();
+  const [categories, setCategories] = useState(null); // null while loading
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [form, setForm] = useState({
+    name: '', category_id: '', description: '', price: '', emoji_icon: '🍽️', image_url: '', allergens: '', dietary_tags: '',
   });
 
   useEffect(() => {
-    const fetchCategories = async () => {
+    (async () => {
       try {
         const res = await api.get('/menu/categories');
-        if (res.data.success) {
-          const fetchedCategories = res.data.data.categories || res.data.data;
-          setCategories(fetchedCategories);
-          if (fetchedCategories.length > 0) {
-            setFormData(prev => ({ ...prev, category_id: fetchedCategories[0]._id }));
-          }
-        }
+        const found = res.data.data.categories || res.data.data;
+        setCategories(found);
+        if (found.length > 0) setForm((prev) => ({ ...prev, category_id: found[0]._id }));
       } catch (err) {
-        console.error('Failed to fetch categories:', err);
+        setCategories([]);
+        toast.error(errorMessage(err, 'Could not load your categories.'));
       }
-    };
-    fetchCategories();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const set = (key) => (e) => setForm((prev) => ({ ...prev, [key]: e.target.value }));
 
   const handleSave = async (e) => {
     e.preventDefault();
-    setLoading(true);
+    if (saving) return;
+    setSaving(true);
+    setError('');
     try {
-      const payload = {
-        name: formData.name,
-        category_id: formData.category_id,
-        price: parseFloat(formData.price),
-      };
-      
-      // Only attach optional strings if they are not empty to avoid Joi validation errors
-      if (formData.description.trim()) payload.description = formData.description.trim();
-      if (formData.emoji_icon.trim()) payload.emoji_icon = formData.emoji_icon.trim();
-      
-      const allergensArray = formData.allergens.split(',').map(s => s.trim()).filter(Boolean);
-      if (allergensArray.length > 0) payload.allergens = allergensArray;
-      
-      const dietaryArray = formData.dietary_tags.split(',').map(s => s.trim()).filter(Boolean);
-      if (dietaryArray.length > 0) payload.dietary_tags = dietaryArray;
+      const payload = { name: form.name.trim(), category_id: form.category_id, price: parseFloat(form.price) };
+      if (form.description.trim()) payload.description = form.description.trim();
+      if (form.emoji_icon.trim()) payload.emoji_icon = form.emoji_icon.trim();
+      if (form.image_url) payload.image_url = form.image_url;
+      if (list(form.allergens).length) payload.allergens = list(form.allergens);
+      if (list(form.dietary_tags).length) payload.dietary_tags = list(form.dietary_tags);
 
       const res = await api.post('/menu/items', payload);
       if (res.data.success) {
+        toast.success(`${payload.name} added to your menu.`);
         navigate('/dashboard/menu');
       }
     } catch (err) {
-      console.error(err);
-      alert(err.response?.data?.message || 'Failed to add item. Please ensure all fields are correct.');
+      setError(errorMessage(err, 'Could not add this item. Please check the details and try again.'));
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   };
 
+  const noCategories = categories !== null && categories.length === 0;
+
   return (
-    <div className="max-w-3xl mx-auto space-y-6 animate-fade-in-up">
-      <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center gap-4">
-          <button onClick={() => navigate('/dashboard/menu')} className="p-2 bg-white rounded-full shadow-sm hover:bg-slate-50 transition-colors text-slate-600">
-            <ArrowLeft size={20} />
-          </button>
-          <div>
-            <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary">Add Menu Item</h1>
-            <p className="text-slate-500">Create a new dish for your digital menu.</p>
-          </div>
+    <div className="max-w-3xl">
+      <Link to="/dashboard/menu" className="mb-4 inline-flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-slate-900">
+        <ArrowLeft size={16} /> Back to menu
+      </Link>
+      <PageHeader title="Add menu item" description="A name, a category and a price are all you need. The rest is optional." />
+
+      {noCategories ? (
+        <div className="card card-pad text-center">
+          <h2 className="card-title">Create a category first</h2>
+          <p className="mx-auto mt-1 max-w-sm text-sm text-slate-500">Every dish belongs to a category, such as Starters, Mains or Drinks.</p>
+          <Link to="/dashboard/categories" className="btn btn-primary mt-5">Create a category</Link>
         </div>
-      </div>
-
-      <div className="bg-white/95 backdrop-blur-xl rounded-[2rem] shadow-[0_8px_32px_rgba(0,0,0,0.05)] border border-slate-100 overflow-hidden">
-        <form onSubmit={handleSave} className="p-8 space-y-8">
-          
-          {/* Basic Info */}
-          <div className="space-y-6">
-            <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
-              <ChefHat className="text-primary" size={20} />
-              <h3 className="font-bold text-lg text-slate-800">Basic Information</h3>
-            </div>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="md:col-span-2">
-                <label className="block text-sm font-bold text-slate-700 mb-2">Item Name *</label>
-                <input required value={formData.name} onChange={e=>setFormData({...formData, name: e.target.value})} type="text" className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary outline-none transition-all" placeholder="e.g. Truffle Fries" />
+      ) : (
+        <form onSubmit={handleSave} className="card">
+          <div className="space-y-5 p-5 sm:p-6">
+            <h2 className="card-title">Basics</h2>
+            <div className="grid gap-5 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <label htmlFor="name" className="label">Name</label>
+                <input id="name" required minLength={2} maxLength={100} value={form.name} onChange={set('name')} placeholder="e.g. Jollof rice with chicken" className="input" />
               </div>
-
               <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2">Price ($) *</label>
-                <input required value={formData.price} onChange={e=>setFormData({...formData, price: e.target.value})} type="number" step="0.01" min="0.01" className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary outline-none transition-all" placeholder="0.00" />
+                <label htmlFor="price" className="label">Price ($)</label>
+                <input id="price" required type="number" step="0.01" min="0.01" value={form.price} onChange={set('price')} placeholder="0.00" className="input" />
               </div>
-
               <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2">Category *</label>
-                <select required value={formData.category_id} onChange={e=>setFormData({...formData, category_id: e.target.value})} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary outline-none transition-all">
-                  <option value="" disabled>Select a category...</option>
-                  {categories.map(c => <option key={c._id} value={c._id}>{c.name}</option>)}
+                <label htmlFor="category" className="label">Category</label>
+                <select id="category" required value={form.category_id} onChange={set('category_id')} className="input" disabled={categories === null}>
+                  <option value="" disabled>{categories === null ? 'Loading…' : 'Select a category'}</option>
+                  {(categories || []).map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
                 </select>
-                {categories.length === 0 && <p className="text-xs text-red-500 mt-2">You must create a category first!</p>}
               </div>
-
-              <div className="md:col-span-2">
-                <label className="block text-sm font-bold text-slate-700 mb-2">Description</label>
-                <textarea rows="3" value={formData.description} onChange={e=>setFormData({...formData, description: e.target.value})} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary outline-none transition-all" placeholder="A brief description of the dish..." />
-              </div>
-
-              <div className="md:col-span-2">
-                <label className="block text-sm font-bold text-slate-700 mb-2">Emoji Icon</label>
-                <div className="flex gap-4 items-center">
-                  <input value={formData.emoji_icon} onChange={e=>setFormData({...formData, emoji_icon: e.target.value})} type="text" className="w-24 text-center px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary outline-none text-2xl" placeholder="🍔" />
-                  <span className="text-sm text-slate-500">Pick an emoji to represent this item visually.</span>
-                </div>
+              <div className="sm:col-span-2">
+                <label htmlFor="description" className="label">Description <span className="font-normal text-slate-400">(optional)</span></label>
+                <textarea id="description" rows={3} maxLength={500} value={form.description} onChange={set('description')} placeholder="What's in it? How is it served?" className="input" />
               </div>
             </div>
           </div>
 
-          {/* Dietary Info */}
-          <div className="space-y-6">
-            <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
-              <h3 className="font-bold text-lg text-slate-800">Dietary & Allergen Info (Optional)</h3>
+          <div className="space-y-5 border-t border-slate-200 p-5 sm:p-6">
+            <h2 className="card-title">Photo</h2>
+            <ImageUpload value={form.image_url} onChange={(url) => setForm((prev) => ({ ...prev, image_url: url }))} emoji={form.emoji_icon || '🍽️'} />
+            <div>
+              <label htmlFor="emoji" className="label">Emoji icon</label>
+              <input id="emoji" value={form.emoji_icon} onChange={set('emoji_icon')} maxLength={8} className="input w-24 text-center text-lg" />
+              <p className="hint">Shown instead when there is no photo.</p>
             </div>
+          </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-5 border-t border-slate-200 p-5 sm:p-6">
+            <h2 className="card-title">Dietary information <span className="text-sm font-normal text-slate-400">(optional)</span></h2>
+            <div className="grid gap-5 sm:grid-cols-2">
               <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2">Allergens</label>
-                <input value={formData.allergens} onChange={e=>setFormData({...formData, allergens: e.target.value})} type="text" placeholder="e.g. Peanuts, Dairy, Gluten (comma separated)" className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary outline-none transition-all" />
+                <label htmlFor="allergens" className="label">Allergens</label>
+                <input id="allergens" value={form.allergens} onChange={set('allergens')} placeholder="Peanuts, Dairy, Gluten" className="input" />
+                <p className="hint">Separate with commas.</p>
               </div>
               <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2">Dietary Tags</label>
-                <input value={formData.dietary_tags} onChange={e=>setFormData({...formData, dietary_tags: e.target.value})} type="text" placeholder="e.g. Vegan, Halal, Spicy (comma separated)" className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary outline-none transition-all" />
+                <label htmlFor="tags" className="label">Dietary tags</label>
+                <input id="tags" value={form.dietary_tags} onChange={set('dietary_tags')} placeholder="Vegan, Halal, Spicy" className="input" />
               </div>
             </div>
           </div>
 
-          <div className="pt-6 border-t border-slate-100 flex justify-end gap-4">
-            <button type="button" onClick={() => navigate('/dashboard/menu')} className="px-6 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-colors">
-              Cancel
-            </button>
-            <button type="submit" disabled={loading} className="flex justify-center items-center gap-2 bg-gradient-to-r from-primary to-secondary text-white px-8 py-3 rounded-xl font-bold shadow-lg shadow-primary/20 hover:shadow-primary/40 transform hover:-translate-y-0.5 transition-all disabled:opacity-70 disabled:hover:translate-y-0">
-              <Save size={20} />
-              {loading ? 'Saving...' : 'Add Item'}
-            </button>
+          {error && <p role="alert" className="alert-error mx-5 mb-5 sm:mx-6">{error}</p>}
+
+          <div className="flex justify-end gap-3 border-t border-slate-200 px-5 py-4 sm:px-6">
+            <button type="button" onClick={() => navigate('/dashboard/menu')} className="btn btn-secondary">Cancel</button>
+            <button type="submit" disabled={saving || categories === null} className="btn btn-primary">{saving ? 'Adding…' : 'Add item'}</button>
           </div>
         </form>
-      </div>
+      )}
     </div>
   );
 }

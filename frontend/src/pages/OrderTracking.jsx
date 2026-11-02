@@ -1,8 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { CheckCircle2, XCircle, Clock, ChefHat, Package, ChevronRight } from 'lucide-react';
+import { Check, ChevronRight, XCircle } from 'lucide-react';
 import Logo from '../components/Logo';
 import api from '../utils/api';
+import { money } from '../utils/format';
+
+const STEPS = [
+  { id: 'received', label: 'Order received', detail: 'The restaurant has your order.' },
+  { id: 'preparing', label: 'Being prepared', detail: 'Your food is being made.' },
+  { id: 'ready', label: 'Ready', detail: 'Your order is ready.' },
+  { id: 'completed', label: 'Served', detail: 'Enjoy your meal!' },
+];
+
+// Maps the restaurant's detailed status onto the four steps a guest cares about.
+const stepIndexOf = (status) => ({ pending: 0, accepted: 0, preparing: 1, ready: 2, completed: 3 }[status] ?? 0);
+const isFinished = (status) => ['completed', 'cancelled'].includes(status);
 
 const OrderTracking = () => {
   const { orderId } = useParams();
@@ -10,106 +22,129 @@ const OrderTracking = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    let stopped = false;
+    let timer;
+
     const fetchOrder = async () => {
       try {
         const res = await api.get(`/public/orders/${orderId}`);
-        if (res.data.success) {
-          setOrder(res.data.data);
-        }
-      } catch (err) {
-        console.error('Failed to fetch order:', err);
+        if (stopped) return;
+        setOrder(res.data.data);
+        // Keep checking every 10 seconds until the order is finished.
+        if (!isFinished(res.data.data.status)) timer = setTimeout(fetchOrder, 10000);
+      } catch {
+        if (!stopped) timer = setTimeout(fetchOrder, 15000); // network blip: try again later
       } finally {
-        setLoading(false);
+        if (!stopped) setLoading(false);
       }
     };
 
     fetchOrder();
-    
-    // Poll for status updates every 10 seconds
-    const interval = setInterval(fetchOrder, 10000);
-    return () => clearInterval(interval);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
   }, [orderId]);
 
-  const steps = [
-    { id: 'pending', label: 'Order Received', icon: CheckCircle2 },
-    { id: 'preparing', label: 'Preparing', icon: ChefHat },
-    { id: 'ready', label: 'Ready for Pickup', icon: Package },
-    { id: 'completed', label: 'Completed', icon: CheckCircle2 },
-  ];
+  if (loading) return <div className="grid min-h-screen place-items-center text-sm text-slate-500">Loading your order…</div>;
 
-  const currentStatus = order?.status || 'pending';
-  const isCancelled = currentStatus === 'cancelled';
-  // "accepted" sits between received and preparing, so it keeps the first step as the current one.
-  const stepStatus = currentStatus === 'accepted' ? 'pending' : currentStatus;
-  const currentStepIndex = steps.findIndex(s => s.id === stepStatus);
+  if (!order) {
+    return (
+      <div className="grid min-h-screen place-items-center px-6 text-center">
+        <div>
+          <Logo size="hero" />
+          <h1 className="mt-4 text-xl font-semibold text-slate-900">Order not found</h1>
+          <p className="mt-1 text-sm text-slate-500">This link may be mistyped. Please ask the staff for help.</p>
+        </div>
+      </div>
+    );
+  }
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-500">Loading tracking info...</div>;
-  if (!order) return <div className="min-h-screen flex items-center justify-center text-slate-500">Order not found</div>;
+  const cancelled = order.status === 'cancelled';
+  const current = stepIndexOf(order.status);
+  const completed = order.status === 'completed';
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans pb-24 relative overflow-x-hidden">
-      <header className="bg-white border-b border-slate-200 p-6 shadow-sm flex items-center justify-between">
-         <div className="flex items-center gap-3">
-           <Logo size="nav" />
-           <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary">Scan2Dine</span>
-         </div>
+    <div className="min-h-screen bg-slate-50 pb-12">
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto flex h-14 max-w-xl items-center px-4 sm:px-6">
+          <Logo wordmark />
+        </div>
       </header>
 
-      <main className="p-6 max-w-2xl mx-auto mt-8 animate-fade-in-up">
-        <div className="bg-white p-8 rounded-[2rem] shadow-[0_8px_32px_rgba(0,0,0,0.05)] border border-slate-100 text-center mb-8">
-          <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 ${isCancelled ? 'bg-red-100 text-red-500' : 'bg-green-100 text-green-500'}`}>
-            {isCancelled ? <XCircle size={40} /> : <CheckCircle2 size={40} />}
+      <main className="mx-auto max-w-xl space-y-4 px-4 py-6 sm:px-6">
+        <section className="card card-pad text-center">
+          <div className={`mx-auto grid size-12 place-items-center rounded-full ${cancelled ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'}`}>
+            {cancelled ? <XCircle size={26} aria-hidden="true" /> : <Check size={26} aria-hidden="true" />}
           </div>
-          <h2 className="text-3xl font-black text-slate-800 mb-2">
-            {isCancelled ? 'Order Cancelled' : currentStatus === 'completed' ? 'Order Served!' : 'Order Received!'}
-          </h2>
-          {isCancelled && <p className="text-slate-500 mb-2">The restaurant could not prepare this order. Please speak to the staff.</p>}
-          {order.restaurant_name && <p className="text-slate-500 font-medium mb-1">{order.restaurant_name}</p>}
-          <p className="text-slate-500 font-medium">Order #{order.order_number}</p>
-          <div className="mt-4 p-4 bg-slate-50 rounded-2xl inline-block">
-             <p className="text-sm font-bold text-slate-700">Total: ${order.total.toFixed(2)}</p>
-          </div>
-        </div>
+          <h1 className="mt-4 text-xl font-semibold text-slate-900">
+            {cancelled ? 'Order cancelled' : completed ? 'Order served' : 'Order received'}
+          </h1>
+          <p className="mt-1 text-sm text-slate-500">
+            {order.restaurant_name ? `${order.restaurant_name} · ` : ''}Order {order.order_number}
+          </p>
+          {cancelled && <p className="mt-3 text-sm text-slate-600">The restaurant could not prepare this order. Please speak to the staff.</p>}
+        </section>
 
-        {!isCancelled && (
-        <div className="bg-white p-8 rounded-[2rem] shadow-[0_8px_32px_rgba(0,0,0,0.05)] border border-slate-100">
-          <h3 className="text-xl font-bold text-slate-800 mb-8 border-b border-slate-100 pb-4">Live Tracking</h3>
-          
-          <div className="space-y-8 relative">
-            {/* Connecting Line */}
-            <div className="absolute left-6 top-6 bottom-6 w-0.5 bg-slate-100"></div>
-
-            {steps.map((step, idx) => {
-              const isActive = idx === currentStepIndex;
-              const isPast = idx < currentStepIndex;
-              const color = isPast ? 'bg-green-500 text-white' : isActive ? 'bg-primary text-white ring-4 ring-primary/20' : 'bg-slate-100 text-slate-400';
-              
-              return (
-                <div key={step.id} className="flex gap-6 relative z-10">
-                  <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${color} transition-all duration-500`}>
-                    <step.icon size={20} />
-                  </div>
-                  <div className="pt-2">
-                    <h4 className={`font-bold text-lg ${isActive || isPast ? 'text-slate-800' : 'text-slate-400'}`}>{step.label}</h4>
-                    {isActive && (
-                      <p className="text-primary font-medium text-sm mt-1 animate-pulse">
-                        {step.id === 'ready' ? 'Your food is ready!' : 'Currently in progress...'}
+        {!cancelled && (
+          <section className="card card-pad" aria-label="Order progress">
+            <ol className="space-y-0">
+              {STEPS.map((step, i) => {
+                const done = i < current || completed;
+                const active = i === current && !completed;
+                return (
+                  <li key={step.id} className="flex gap-4">
+                    <div className="flex flex-col items-center">
+                      <span
+                        className={`grid size-7 place-items-center rounded-full text-xs font-semibold ${
+                          done ? 'bg-emerald-500 text-white' : active ? 'bg-primary text-white ring-4 ring-primary/15' : 'bg-slate-100 text-slate-400'
+                        }`}
+                        aria-hidden="true"
+                      >
+                        {done ? <Check size={14} /> : i + 1}
+                      </span>
+                      {i < STEPS.length - 1 && <span className={`my-1 w-0.5 flex-1 ${done ? 'bg-emerald-500' : 'bg-slate-200'}`} aria-hidden="true" />}
+                    </div>
+                    <div className="pb-6">
+                      <p className={`text-sm font-semibold ${done || active ? 'text-slate-900' : 'text-slate-400'}`} aria-current={active ? 'step' : undefined}>
+                        {step.label}
+                        {done && <span className="sr-only"> (done)</span>}
                       </p>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
+                      {active && <p className="mt-0.5 text-sm text-slate-500">{step.detail}</p>}
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+            {!completed && <p className="border-t border-slate-100 pt-3 text-xs text-slate-400">This page updates by itself. You can keep it open.</p>}
+          </section>
         )}
 
+        <section className="card card-pad" aria-label="Your order">
+          <h2 className="card-title">Your order</h2>
+          <ul className="mt-3 divide-y divide-slate-100 text-sm">
+            {order.items.map((item, idx) => (
+              <li key={idx} className="flex justify-between gap-4 py-2">
+                <span className="text-slate-700"><span className="mr-2 tabular-nums text-slate-400">{item.quantity}×</span>{item.item_name}</span>
+                <span className="tabular-nums text-slate-900">{money(item.subtotal)}</span>
+              </li>
+            ))}
+          </ul>
+          <dl className="mt-3 space-y-1 border-t border-slate-200 pt-3 text-sm">
+            {order.tax > 0 && (
+              <>
+                <div className="flex justify-between text-slate-500"><dt>Subtotal</dt><dd className="tabular-nums">{money(order.subtotal)}</dd></div>
+                <div className="flex justify-between text-slate-500"><dt>Tax</dt><dd className="tabular-nums">{money(order.tax)}</dd></div>
+              </>
+            )}
+            <div className="flex justify-between text-base font-semibold text-slate-900"><dt>Total</dt><dd className="tabular-nums">{money(order.total)}</dd></div>
+          </dl>
+        </section>
+
         {order.restaurant_slug && (
-          <div className="mt-8 text-center">
-            <Link to={`/menu/${order.restaurant_slug}`} className="text-primary font-bold hover:underline flex items-center justify-center gap-1">
-               Order More Items <ChevronRight size={18} />
-            </Link>
-          </div>
+          <Link to={`/menu/${order.restaurant_slug}`} className="btn btn-secondary w-full">
+            Order more <ChevronRight size={16} />
+          </Link>
         )}
       </main>
     </div>

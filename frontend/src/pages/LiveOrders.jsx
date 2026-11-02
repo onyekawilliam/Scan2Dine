@@ -1,219 +1,266 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, QrCode, TrendingUp, Settings, ChevronRight, X, Printer, Bell } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import api from '../utils/api';
-import { SOCKET_URL } from '../utils/config';
+import { Bell, Check, ChefHat, Circle, Plus, Printer, X } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { io } from 'socket.io-client';
+import api from '../utils/api';
+import { SOCKET_URL } from '../utils/config';
+import { money, errorMessage } from '../utils/format';
+import { printOrderSlip } from '../utils/printOrder';
+import { statusInfo, isActiveStatus } from '../constants/orderStatus';
+import PageHeader from '../components/ui/PageHeader';
+import EmptyState from '../components/ui/EmptyState';
+import StatusBadge from '../components/ui/StatusBadge';
+import { useToast } from '../components/ui/toastContext';
+
+function Stat({ label, value, hint }) {
+  return (
+    <div className="card card-pad">
+      <p className="text-sm text-slate-500">{label}</p>
+      <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{value}</p>
+      {hint && <p className="mt-1 text-xs text-slate-400">{hint}</p>}
+    </div>
+  );
+}
+
+// Shown to a brand-new restaurant until it has a category and at least one item.
+function SetupChecklist({ hasCategory, hasItems }) {
+  const steps = [
+    { done: hasCategory, title: 'Create a category', text: 'Group your dishes, like Starters or Drinks.', to: '/dashboard/categories', cta: 'Add category' },
+    { done: hasItems, title: 'Add your first menu item', text: 'A name and a price is enough to start. Photos are optional.', to: '/dashboard/menu/add', cta: 'Add item' },
+    { done: false, title: 'Print your QR code', text: 'Put it on tables so guests can scan and order.', to: '/dashboard/qr', cta: 'Get QR code' },
+  ];
+  const next = steps.findIndex((s) => !s.done);
+
+  return (
+    <section className="card card-pad mb-6" aria-labelledby="setup-title">
+      <h2 id="setup-title" className="card-title">Get your restaurant ready</h2>
+      <p className="mt-1 text-sm text-slate-500">Three steps and guests can start ordering.</p>
+      <ol className="mt-4 divide-y divide-slate-100">
+        {steps.map((step, i) => (
+          <li key={step.title} className="flex items-center gap-4 py-3">
+            <span
+              className={`grid size-7 shrink-0 place-items-center rounded-full ${step.done ? 'bg-emerald-100 text-emerald-600' : i === next ? 'bg-primary-soft text-primary' : 'bg-slate-100 text-slate-400'}`}
+              aria-hidden="true"
+            >
+              {step.done ? <Check size={15} /> : <Circle size={10} />}
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className={`text-sm font-medium ${step.done ? 'text-slate-400 line-through' : 'text-slate-900'}`}>{step.title}</p>
+              <p className="text-xs text-slate-500">{step.text}</p>
+            </div>
+            {!step.done && (
+              <Link to={step.to} className={`btn btn-sm ${i === next ? 'btn-primary' : 'btn-secondary'}`}>{step.cta}</Link>
+            )}
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
 
 function LiveOrders() {
+  const toast = useToast();
   const [orders, setOrders] = useState([]);
-  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [selectedId, setSelectedId] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [stats, setStats] = useState(null);
+  const [categoryCount, setCategoryCount] = useState(null);
+  const [busy, setBusy] = useState(false);
 
-  const fetchOrders = async () => {
+  const fetchOrders = useCallback(async () => {
     try {
       const res = await api.get('/orders');
-      if (res.data.success) {
-        setOrders(res.data.data.orders);
-      }
+      if (res.data.success) setOrders(res.data.data.orders);
     } catch (err) {
-      console.error(err);
+      toast.error(errorMessage(err, 'Could not load orders.'));
     } finally {
       setLoading(false);
     }
-  };
+  }, [toast]);
+
+  const fetchOverview = useCallback(async () => {
+    try {
+      const [statsRes, catRes] = await Promise.all([api.get('/analytics/dashboard'), api.get('/menu/categories')]);
+      setStats(statsRes.data.data);
+      setCategoryCount((catRes.data.data.categories || catRes.data.data).length);
+    } catch (err) {
+      console.error(err);
+    }
+  }, []);
 
   useEffect(() => {
     fetchOrders();
+    fetchOverview();
 
-    // WebSocket connection for real-time orders
     // The server only lets a socket with a valid staff token join its own restaurant's room.
     const socket = io(SOCKET_URL, { auth: { token: localStorage.getItem('token') } });
     socket.on('connect', () => socket.emit('join_restaurant'));
 
     socket.on('new_order', (order) => {
-      setOrders(prev => (prev.some(o => o._id === order._id) ? prev : [order, ...prev]));
-      // Sound notification could go here
+      setOrders((prev) => (prev.some((o) => o._id === order._id) ? prev : [order, ...prev]));
+      toast.info(`New order ${order.order_number}`);
+      fetchOverview();
     });
 
     // Keeps several staff devices in sync when one of them changes an order.
     socket.on('order_updated', ({ id, status }) => {
-      setOrders(prev => prev.map(o => (o._id === id ? { ...o, status } : o)));
-      setSelectedOrder(prev => (prev && prev._id === id ? { ...prev, status } : prev));
+      setOrders((prev) => prev.map((o) => (o._id === id ? { ...o, status } : o)));
+      fetchOverview();
     });
 
     return () => socket.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const updateOrderStatus = async (id, status) => {
+  const changeStatus = async (order, status) => {
+    if (busy) return;
+    setBusy(true);
     try {
-      await api.put(`/orders/${id}/status`, { status });
-      setOrders(prev => prev.map(o => (o._id === id ? { ...o, status } : o)));
-      setSelectedOrder(prev => (prev && prev._id === id ? { ...prev, status } : prev));
+      await api.put(`/orders/${order._id}/status`, { status });
+      setOrders((prev) => prev.map((o) => (o._id === order._id ? { ...o, status } : o)));
+      fetchOverview();
     } catch (err) {
-      console.error(err);
-      // The order was probably changed from another device: show the real state.
-      fetchOrders();
+      toast.error(errorMessage(err, 'Could not update this order.'));
+      fetchOrders(); // it was probably changed from another device: show the real state
+    } finally {
+      setBusy(false);
     }
   };
 
-  const getStatusColor = (status) => {
-    switch(status) {
-      case 'ready': return 'bg-gradient-to-r from-[#28a745] to-[#20c997] text-white';
-      case 'preparing': return 'bg-gradient-to-r from-primary to-secondary text-white';
-      case 'pending': return 'bg-gradient-to-r from-[#ffc107] to-[#ff9800] text-white';
-      case 'completed': return 'bg-slate-200 text-slate-700';
-      case 'cancelled': return 'bg-red-100 text-red-700';
-      default: return 'bg-slate-100 text-slate-700';
+  const cancelOrder = (order) => {
+    if (window.confirm(`Cancel order ${order.order_number}? The customer will see that it was cancelled.`)) {
+      changeStatus(order, 'cancelled');
     }
   };
 
-  if (loading) return <div className="p-8 text-center text-slate-500">Loading orders...</div>;
+  const print = (order) => {
+    if (!printOrderSlip(order)) toast.error('Your browser blocked the print window. Allow pop-ups for this site and try again.');
+  };
 
-  const activeOrders = orders.filter(o => !['completed', 'cancelled'].includes(o.status));
+  if (loading) return <p className="py-16 text-center text-sm text-slate-500">Loading orders…</p>;
+
+  const activeOrders = orders.filter((o) => isActiveStatus(o.status));
+  const selected = orders.find((o) => o._id === selectedId) || null;
+  const today = stats?.daily?.[stats.daily.length - 1];
+  const needsSetup = stats && categoryCount !== null && (categoryCount === 0 || stats.menu_items_count === 0);
 
   return (
-    <div className="h-[calc(100vh-6rem)] flex flex-col md:flex-row gap-6">
-      
-      {/* Left Sidebar: Recent Orders List */}
-      <div className="w-full md:w-1/3 flex flex-col bg-white/95 backdrop-blur-xl rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.05)] border border-slate-100 overflow-hidden">
-        <div className="p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
-          <h2 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary">Recent Orders</h2>
-          <Link to="/dashboard/orders" className="text-sm font-medium text-primary hover:underline">View All</Link>
-        </div>
-        
-        <div className="flex-1 overflow-y-auto p-4 space-y-3">
-          {activeOrders.length === 0 ? (
-            <div className="text-center py-12 text-slate-400">
-              <Bell size={48} className="mx-auto mb-3 opacity-20" />
-              <p>No active orders right now</p>
-            </div>
-          ) : (
-            activeOrders.map(order => (
-              <div 
-                key={order._id}
-                onClick={() => setSelectedOrder(order)}
-                className={`p-4 rounded-xl border cursor-pointer transition-all ${selectedOrder?._id === order._id ? 'border-primary shadow-md bg-primary/5' : 'border-slate-100 hover:border-slate-300 hover:shadow-sm'}`}
-              >
-                <div className="flex justify-between items-start mb-2">
-                  <span className="font-bold text-slate-800">{order.order_number}</span>
-                  <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${getStatusColor(order.status)}`}>
-                    {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
-                  </span>
-                </div>
-                <div className="text-sm text-slate-600 mb-2 truncate">
-                  {order.items.map(i => `${i.quantity}x ${i.item_name}`).join(', ')}
-                </div>
-                <div className="flex justify-between items-center">
-                  <span className="text-xs text-slate-400">
-                    {formatDistanceToNow(new Date(order.createdAt), { addSuffix: true })}
-                  </span>
-                  <span className="font-bold text-green-600">${order.total.toFixed(2)}</span>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
+    <div>
+      <PageHeader title="Live orders" description="New orders appear here the moment a guest places them.">
+        <Link to="/dashboard/menu/add" className="btn btn-secondary"><Plus size={16} /> Add menu item</Link>
+        <Link to="/dashboard/kitchen" className="btn btn-primary"><ChefHat size={16} /> Kitchen display</Link>
+      </PageHeader>
+
+      {needsSetup && <SetupChecklist hasCategory={categoryCount > 0} hasItems={stats.menu_items_count > 0} />}
+
+      <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <Stat label="Active orders" value={activeOrders.length} hint="Waiting or in progress" />
+        <Stat label="Orders today" value={today ? today.orders : 0} hint="Cancelled not counted" />
+        <Stat label="Revenue today" value={money(today ? today.revenue : 0)} hint="Cancelled not counted" />
+        <Stat label="Items on menu" value={stats ? stats.menu_items_count : 0} hint="Available to order" />
       </div>
 
-      {/* Center: Order Details Panel */}
-      <div className="w-full md:w-2/3 flex flex-col gap-6">
-        {selectedOrder ? (
-          <div className="flex-1 bg-white/95 backdrop-blur-xl rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.05)] border border-slate-100 overflow-hidden flex flex-col relative animate-fade-in-up">
-            <button onClick={() => setSelectedOrder(null)} className="absolute top-4 right-4 p-2 text-slate-400 hover:text-slate-700 bg-slate-100 rounded-full">
-              <X size={18} />
-            </button>
+      <div className="grid gap-6 lg:grid-cols-5">
+        {/* Order list */}
+        <section className="card lg:col-span-2" aria-label="Active orders">
+          <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+            <h2 className="card-title">Active orders</h2>
+            <Link to="/dashboard/orders" className="text-sm font-medium text-primary hover:underline">View history</Link>
+          </div>
 
-            <div className="p-6 border-b border-slate-100 bg-slate-50/50 flex justify-between items-end">
-              <div>
-                <h2 className="text-2xl font-bold text-slate-800 mb-1">{selectedOrder.order_number}</h2>
-                <p className="text-slate-500 text-sm">
-                  {selectedOrder.customer_name ? `Customer: ${selectedOrder.customer_name}` : `Table: ${selectedOrder.table_number || 'N/A'}`}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <button className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-sm font-medium transition-colors">
-                  <Printer size={16} /> Print
-                </button>
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-6">
-              <div className="space-y-4">
-                {selectedOrder.items.map((item, idx) => (
-                  <div key={idx} className="flex justify-between items-center py-3 border-b border-slate-50 last:border-0">
-                    <div>
-                      <div className="font-medium text-slate-800"><span className="text-primary mr-2">{item.quantity}x</span> {item.item_name}</div>
-                      {item.special_instructions && (
-                        <div className="text-sm text-amber-600 bg-amber-50 px-2 py-1 rounded mt-1 inline-block">
-                          Note: {item.special_instructions}
-                        </div>
-                      )}
+          {activeOrders.length === 0 ? (
+            <EmptyState icon={Bell} title="No active orders" description="When a guest scans your QR code and orders, it will show up here instantly.">
+              <Link to="/dashboard/qr" className="btn btn-secondary btn-sm">Get your QR code</Link>
+            </EmptyState>
+          ) : (
+            <ul className="max-h-[32rem] divide-y divide-slate-100 overflow-y-auto">
+              {activeOrders.map((order) => (
+                <li key={order._id}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedId(order._id)}
+                    aria-pressed={selectedId === order._id}
+                    className={`block w-full px-5 py-4 text-left transition-colors ${selectedId === order._id ? 'bg-primary-soft' : 'hover:bg-slate-50'}`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-semibold text-slate-900">{order.order_number}</span>
+                      <StatusBadge status={order.status} />
                     </div>
-                    <div className="font-medium text-slate-700">${item.subtotal.toFixed(2)}</div>
+                    <p className="mt-1 truncate text-sm text-slate-600">{order.items.map((i) => `${i.quantity}× ${i.item_name}`).join(', ')}</p>
+                    <div className="mt-1.5 flex items-center justify-between text-xs text-slate-500">
+                      <span>
+                        {order.table_number ? `Table ${order.table_number} · ` : ''}
+                        {formatDistanceToNow(new Date(order.createdAt), { addSuffix: true })}
+                      </span>
+                      <span className="font-semibold tabular-nums text-slate-900">{money(order.total)}</span>
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        {/* Order detail */}
+        <section className="card lg:col-span-3" aria-label="Order details">
+          {selected ? (
+            <div>
+              <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+                <div>
+                  <div className="flex items-center gap-3">
+                    <h2 className="text-lg font-semibold text-slate-900">{selected.order_number}</h2>
+                    <StatusBadge status={selected.status} />
                   </div>
-                ))}
-              </div>
-              
-              <div className="mt-8 border-t border-slate-100 pt-4 space-y-2">
-                <div className="flex justify-between text-slate-500"><span>Subtotal</span><span>${selectedOrder.subtotal.toFixed(2)}</span></div>
-                <div className="flex justify-between text-slate-500"><span>Tax</span><span>${selectedOrder.tax.toFixed(2)}</span></div>
-                <div className="flex justify-between font-bold text-xl text-slate-800 mt-2 pt-2 border-t border-slate-100">
-                  <span>Total</span><span className="text-green-600">${selectedOrder.total.toFixed(2)}</span>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {selected.customer_name ? `${selected.customer_name} · ` : ''}
+                    {selected.table_number ? `Table ${selected.table_number}` : 'No table given'} ·{' '}
+                    {formatDistanceToNow(new Date(selected.createdAt), { addSuffix: true })}
+                  </p>
+                </div>
+                <div className="flex gap-1">
+                  <button type="button" onClick={() => print(selected)} className="btn btn-ghost btn-sm"><Printer size={15} /> Print</button>
+                  <button type="button" onClick={() => setSelectedId(null)} aria-label="Close details" className="btn btn-ghost btn-sm !px-2"><X size={16} /></button>
                 </div>
               </div>
-            </div>
 
-            <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex flex-wrap gap-3">
-              {selectedOrder.status === 'pending' && (
-                <button onClick={() => updateOrderStatus(selectedOrder._id, 'accepted')} className="flex-1 bg-gradient-to-r from-primary to-secondary text-white py-3 rounded-xl font-bold shadow-lg hover:shadow-xl transition-all hover:-translate-y-0.5">
-                  Accept Order
-                </button>
-              )}
-              {selectedOrder.status === 'accepted' && (
-                <button onClick={() => updateOrderStatus(selectedOrder._id, 'preparing')} className="flex-1 bg-gradient-to-r from-blue-500 to-indigo-600 text-white py-3 rounded-xl font-bold shadow-lg hover:shadow-xl transition-all hover:-translate-y-0.5">
-                  Mark Preparing
-                </button>
-              )}
-              {selectedOrder.status === 'preparing' && (
-                <button onClick={() => updateOrderStatus(selectedOrder._id, 'ready')} className="flex-1 bg-gradient-to-r from-[#28a745] to-[#20c997] text-white py-3 rounded-xl font-bold shadow-lg hover:shadow-xl transition-all hover:-translate-y-0.5">
-                  Mark Ready
-                </button>
-              )}
-              {selectedOrder.status === 'ready' && (
-                <button onClick={() => updateOrderStatus(selectedOrder._id, 'completed')} className="flex-1 bg-slate-800 text-white py-3 rounded-xl font-bold shadow-lg hover:shadow-xl transition-all hover:-translate-y-0.5">
-                  Complete Order
-                </button>
-              )}
-              <button onClick={() => updateOrderStatus(selectedOrder._id, 'cancelled')} className="px-6 bg-white border-2 border-red-100 text-red-500 hover:bg-red-50 py-3 rounded-xl font-bold transition-all">
-                Cancel
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex-1 flex items-center justify-center bg-white/40 backdrop-blur-md rounded-2xl border border-white/50 border-dashed">
-            <div className="text-center text-slate-400">
-              <p className="text-lg font-medium">Select an order to view details</p>
-            </div>
-          </div>
-        )}
+              <ul className="divide-y divide-slate-100 px-5">
+                {selected.items.map((item, idx) => (
+                  <li key={idx} className="flex items-start justify-between gap-4 py-3">
+                    <div>
+                      <p className="text-sm font-medium text-slate-900"><span className="mr-2 tabular-nums text-slate-500">{item.quantity}×</span>{item.item_name}</p>
+                      {item.special_instructions && <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800">Note: {item.special_instructions}</p>}
+                    </div>
+                    <span className="text-sm tabular-nums text-slate-700">{money(item.subtotal)}</span>
+                  </li>
+                ))}
+              </ul>
 
-        {/* Right Quick Actions (Horizontal row below center or right side if space) */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Link to="/dashboard/menu" className="flex items-center justify-center gap-2 bg-gradient-to-r from-primary to-secondary text-white p-4 rounded-xl font-medium shadow-lg hover:scale-[1.02] transition-transform">
-            <Plus size={18} /> Add Item
-          </Link>
-          <Link to="/dashboard/qr" className="flex items-center justify-center gap-2 bg-gradient-to-r from-primary to-secondary text-white p-4 rounded-xl font-medium shadow-lg hover:scale-[1.02] transition-transform">
-            <QrCode size={18} /> Get QR
-          </Link>
-          <Link to="/dashboard/analytics" className="flex items-center justify-center gap-2 bg-gradient-to-r from-[#6c757d] to-[#495057] text-white p-4 rounded-xl font-medium shadow-lg hover:scale-[1.02] transition-transform">
-            <TrendingUp size={18} /> Analytics
-          </Link>
-          <button className="flex items-center justify-center gap-2 bg-gradient-to-r from-[#6c757d] to-[#495057] text-white p-4 rounded-xl font-medium shadow-lg hover:scale-[1.02] transition-transform">
-            <Settings size={18} /> Settings
-          </button>
-        </div>
+              {selected.special_instructions && (
+                <p className="mx-5 mb-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">Order note: {selected.special_instructions}</p>
+              )}
+
+              <dl className="space-y-1 border-t border-slate-200 px-5 py-4 text-sm">
+                <div className="flex justify-between text-slate-500"><dt>Subtotal</dt><dd className="tabular-nums">{money(selected.subtotal)}</dd></div>
+                <div className="flex justify-between text-slate-500"><dt>Tax</dt><dd className="tabular-nums">{money(selected.tax)}</dd></div>
+                <div className="flex justify-between text-base font-semibold text-slate-900"><dt>Total</dt><dd className="tabular-nums">{money(selected.total)}</dd></div>
+              </dl>
+
+              {isActiveStatus(selected.status) && (
+                <div className="flex gap-3 border-t border-slate-200 px-5 py-4">
+                  {statusInfo(selected.status).next && (
+                    <button type="button" disabled={busy} onClick={() => changeStatus(selected, statusInfo(selected.status).next)} className="btn btn-primary flex-1">
+                      {statusInfo(selected.status).action}
+                    </button>
+                  )}
+                  <button type="button" disabled={busy} onClick={() => cancelOrder(selected)} className="btn btn-danger">Cancel order</button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <EmptyState icon={Bell} title="Select an order" description="Choose an order from the list to see what was ordered and move it forward." />
+          )}
+        </section>
       </div>
     </div>
   );

@@ -1,243 +1,306 @@
-import React, { useState, useEffect } from 'react';
-import { Star, ShoppingCart, Plus, Minus, X, CheckCircle2, ArrowRight } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { Minus, Plus, ShoppingBag, Trash2, X } from 'lucide-react';
 import api from '../utils/api';
+import { photoUrl } from '../utils/cloudinary';
+import { money, errorMessage } from '../utils/format';
+import Logo from '../components/Logo';
+
+const MAX_QTY = 50;
+const categoryIdOf = (item) => (typeof item.category_id === 'object' ? item.category_id?._id : item.category_id);
+
+function Stepper({ qty, onChange, label }) {
+  return (
+    <div className="inline-flex items-center rounded-lg border border-slate-300 bg-white" role="group" aria-label={`Quantity of ${label}`}>
+      <button type="button" onClick={() => onChange(qty - 1)} aria-label={`Remove one ${label}`} className="grid size-9 place-items-center text-slate-600 hover:bg-slate-50">
+        {qty <= 1 ? <Trash2 size={15} /> : <Minus size={15} />}
+      </button>
+      <span className="min-w-8 text-center text-sm font-semibold tabular-nums" aria-live="polite">{qty}</span>
+      <button type="button" onClick={() => onChange(qty + 1)} disabled={qty >= MAX_QTY} aria-label={`Add one more ${label}`} className="grid size-9 place-items-center text-slate-600 hover:bg-slate-50 disabled:opacity-40">
+        <Plus size={15} />
+      </button>
+    </div>
+  );
+}
 
 const CustomerView = () => {
   const { restaurantId } = useParams();
   const navigate = useNavigate();
-  
+
   const [restaurant, setRestaurant] = useState(null);
   const [categories, setCategories] = useState([]);
   const [menuItems, setMenuItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  
+  const [loadError, setLoadError] = useState('');
+
   const [activeCategory, setActiveCategory] = useState('All');
-  const [cart, setCart] = useState([]);
+  const [cart, setCart] = useState({}); // item id -> quantity
   const [isCartOpen, setIsCartOpen] = useState(false);
-  const [showToast, setShowToast] = useState(false);
-  
-  // Checkout State
+
   const [tableNumber, setTableNumber] = useState('');
   const [customerName, setCustomerName] = useState('');
+  const [note, setNote] = useState('');
   const [orderError, setOrderError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    const fetchMenu = async () => {
+    (async () => {
       try {
         const res = await api.get(`/public/menu/${restaurantId}`);
-        if (res.data.success) {
-          setRestaurant(res.data.data.restaurant);
-          setCategories(res.data.data.categories);
-          setMenuItems(res.data.data.items);
-        }
+        setRestaurant(res.data.data.restaurant);
+        setCategories(res.data.data.categories);
+        setMenuItems(res.data.data.items);
       } catch (err) {
-        console.error(err);
+        setLoadError(err.response?.status === 404 ? 'notfound' : errorMessage(err, 'We could not load this menu.'));
       } finally {
         setLoading(false);
       }
-    };
-    fetchMenu();
+    })();
   }, [restaurantId]);
 
-  const displayItems = activeCategory === 'All' 
-    ? menuItems 
-    : menuItems.filter(item => {
-        const catId = typeof item.category_id === 'object' ? item.category_id._id : item.category_id;
-        return catId === activeCategory;
+  const cartKey = restaurant ? `s2d_cart_${restaurant._id}` : null;
+  // Saving must wait until the saved cart has been read back, or it would overwrite it with an empty one.
+  const [restoredKey, setRestoredKey] = useState(null);
+
+  // Restore a saved cart once the menu is known, dropping anything that is gone or sold out.
+  useEffect(() => {
+    if (!cartKey) return;
+    try {
+      const saved = JSON.parse(localStorage.getItem(cartKey) || '{}');
+      const valid = {};
+      menuItems.forEach((item) => {
+        if (item.is_available !== false && saved[item._id] > 0) valid[item._id] = Math.min(saved[item._id], MAX_QTY);
       });
+      setCart(valid);
+    } catch {
+      setCart({});
+    }
+    setRestoredKey(cartKey);
+  }, [cartKey, menuItems]);
 
-  const addToCart = (item) => {
-    setCart(prev => {
-      const existing = prev.find(i => i._id === item._id);
-      if (existing) {
-        return prev.map(i => i._id === item._id ? { ...i, qty: i.qty + 1 } : i);
-      }
-      return [...prev, { ...item, qty: 1 }];
+  useEffect(() => {
+    if (!cartKey || restoredKey !== cartKey) return;
+    try {
+      localStorage.setItem(cartKey, JSON.stringify(cart));
+    } catch {
+      // Private browsing may block storage: the cart simply will not survive a reload.
+    }
+  }, [cart, cartKey, restoredKey]);
+
+  const setQty = (id, qty) =>
+    setCart((prev) => {
+      const next = { ...prev };
+      if (qty <= 0) delete next[id];
+      else next[id] = Math.min(qty, MAX_QTY);
+      return next;
     });
-    setShowToast(true);
-    setTimeout(() => setShowToast(false), 2000);
-  };
 
-  const updateQty = (id, delta) => {
-    setCart(prev => prev.map(item => {
-      if (item._id === id) {
-        const newQty = item.qty + delta;
-        return newQty > 0 ? { ...item, qty: newQty } : item;
-      }
-      return item;
-    }));
-  };
+  // Customers only see categories that actually have something on them.
+  const visibleCategories = useMemo(
+    () => categories.filter((cat) => menuItems.some((item) => categoryIdOf(item) === cat._id)),
+    [categories, menuItems]
+  );
 
-  const removeItem = (id) => setCart(prev => prev.filter(item => item._id !== id));
+  const groups = useMemo(() => {
+    const shown = activeCategory === 'All' ? visibleCategories : visibleCategories.filter((c) => c._id === activeCategory);
+    return shown.map((cat) => ({ cat, items: menuItems.filter((i) => categoryIdOf(i) === cat._id) }));
+  }, [activeCategory, visibleCategories, menuItems]);
 
-  const cartTotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
-  const cartCount = cart.reduce((sum, item) => sum + item.qty, 0);
+  const cartLines = menuItems.filter((item) => cart[item._id] > 0).map((item) => ({ item, qty: cart[item._id] }));
+  const cartCount = cartLines.reduce((sum, l) => sum + l.qty, 0);
+  const cartTotal = cartLines.reduce((sum, l) => sum + l.item.price * l.qty, 0);
 
-  const handleCheckout = async () => {
+  const handleCheckout = async (e) => {
+    e.preventDefault();
+    if (submitting || cartLines.length === 0) return;
     setSubmitting(true);
     setOrderError('');
     try {
-      const orderItems = cart.map(i => ({ menu_item_id: i._id, quantity: i.qty }));
-      const payload = {
+      const res = await api.post('/public/orders', {
         restaurant_id: restaurant._id,
-        table_number: tableNumber,
-        customer_name: customerName,
-        items: orderItems
-      };
-      
-      const res = await api.post('/public/orders', payload);
+        table_number: tableNumber.trim(),
+        customer_name: customerName.trim(),
+        special_instructions: note.trim(),
+        items: cartLines.map((l) => ({ menu_item_id: l.item._id, quantity: l.qty })),
+      });
       if (res.data.success) {
-        setCart([]);
+        setCart({});
         setIsCartOpen(false);
-        // Redirect to order tracking
         navigate(`/track/${res.data.data.order._id}`);
       }
     } catch (err) {
-      console.error(err);
-      setOrderError(
-        err.response?.data?.error?.message ||
-          err.response?.data?.message ||
-          'We could not place your order. Please check your connection and try again.'
-      );
+      setOrderError(errorMessage(err, 'We could not place your order. Please check your connection and try again.'));
     } finally {
       setSubmitting(false);
     }
   };
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-500">Loading Menu...</div>;
-  if (!restaurant) return <div className="min-h-screen flex items-center justify-center text-slate-500">Restaurant not found</div>;
+  if (loading) return <div className="grid min-h-screen place-items-center text-sm text-slate-500">Loading menu…</div>;
+
+  if (!restaurant) {
+    return (
+      <div className="grid min-h-screen place-items-center px-6 text-center">
+        <div>
+          <Logo size="hero" />
+          <h1 className="mt-4 text-xl font-semibold text-slate-900">{loadError === 'notfound' ? 'Restaurant not found' : 'Menu unavailable'}</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            {loadError === 'notfound' ? 'This link may be mistyped or out of date. Please scan the QR code again.' : loadError}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans pb-24 relative overflow-x-hidden">
-      
-      {/* Toast Notification */}
-      <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 transition-all duration-300 ${showToast ? 'translate-y-0 opacity-100' : '-translate-y-10 opacity-0 pointer-events-none'}`}>
-        <div className="bg-emerald-500 text-white px-6 py-3 rounded-full font-medium shadow-lg flex items-center gap-2">
-          <CheckCircle2 size={20} /> Added to cart
+    <div className="min-h-screen bg-slate-50 pb-28">
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{restaurant.restaurant_name}</h1>
+          {restaurant.description && <p className="mt-1.5 text-sm text-slate-600">{restaurant.description}</p>}
+          {restaurant.address && <p className="mt-1 text-xs text-slate-400">{restaurant.address}</p>}
         </div>
-      </div>
-
-      {/* Header Section */}
-      <header className="bg-gradient-to-r from-primary to-secondary pt-12 pb-8 px-6 text-center text-white relative shadow-md">
-         <div className="absolute top-0 right-0 w-64 h-64 bg-accent/20 rounded-full blur-[80px]"></div>
-         <div className="relative z-10 animate-fade-in-up">
-           <h1 className="text-3xl font-extrabold mb-1">{restaurant.restaurant_name}</h1>
-           {restaurant.description && <p className="text-white/80 font-medium mb-4 max-w-md mx-auto">{restaurant.description}</p>}
-           {restaurant.address && <p className="text-white/70 text-sm">{restaurant.address}</p>}
-         </div>
       </header>
 
-      {/* Category Navigation */}
-      <div className="sticky top-0 z-30 bg-white/80 backdrop-blur-xl border-b border-slate-200 shadow-sm">
-        <div className="flex overflow-x-auto py-4 px-6 gap-3 no-scrollbar max-w-4xl mx-auto">
-          <button onClick={() => setActiveCategory('All')} className={`whitespace-nowrap px-5 py-2 rounded-full text-sm font-bold transition-all ${activeCategory === 'All' ? 'bg-gradient-to-r from-primary to-secondary text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
-            All
-          </button>
-          {categories.map(cat => (
-            <button 
-              key={cat._id}
-              onClick={() => setActiveCategory(cat._id)}
-              className={`whitespace-nowrap px-5 py-2 rounded-full text-sm font-bold transition-all flex items-center gap-2 ${activeCategory === cat._id ? 'bg-gradient-to-r from-primary to-secondary text-white shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
-            >
-              {cat.emoji_icon} {cat.name}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Menu Grid */}
-      <main className="p-6 max-w-4xl mx-auto">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4">
-          {displayItems.map((item, idx) => (
-            <div key={item._id} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 flex gap-4 hover:shadow-lg hover:-translate-y-1 transition-all duration-300 animate-fade-in-up">
-               <div className="w-20 h-20 bg-gradient-to-br from-primary/10 to-secondary/10 rounded-2xl flex items-center justify-center text-4xl shrink-0 shadow-inner">
-                 {item.emoji_icon || '🍽️'}
-               </div>
-               
-               <div className="flex-1 flex flex-col">
-                 <h3 className="font-bold text-slate-800 text-lg leading-tight">{item.name}</h3>
-                 <p className="text-sm text-slate-500 mt-1 line-clamp-2 flex-1">{item.description}</p>
-                 <div className="flex items-center justify-between mt-3">
-                   <span className="font-bold text-primary text-lg">${item.price.toFixed(2)}</span>
-                   {item.is_available !== false ? (
-                     <button onClick={() => addToCart(item)} className="bg-slate-900 hover:bg-primary text-white p-2 rounded-xl transition-colors shadow-sm"><Plus size={20} /></button>
-                   ) : (
-                     <span className="text-xs font-bold text-red-500 bg-red-50 px-2 py-1 rounded">Sold Out</span>
-                   )}
-                 </div>
-               </div>
-            </div>
-          ))}
-        </div>
-      </main>
-
-      {/* Floating Cart Button */}
-      {cartCount > 0 && (
-        <button onClick={() => setIsCartOpen(true)} className="fixed bottom-6 right-6 z-40 bg-gradient-to-r from-emerald-400 to-emerald-600 text-white p-4 rounded-full shadow-[0_8px_30px_rgb(16,185,129,0.3)] hover:scale-105 transition-transform flex items-center justify-center gap-3">
-          <div className="relative">
-            <ShoppingCart size={24} />
-            <span className="absolute -top-2 -right-2 bg-white text-emerald-600 text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center">{cartCount}</span>
+      {visibleCategories.length > 1 && (
+        <nav className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur" aria-label="Menu categories">
+          <div className="no-scrollbar mx-auto flex max-w-3xl gap-2 overflow-x-auto px-4 py-3 sm:px-6">
+            {[{ _id: 'All', name: 'All' }, ...visibleCategories].map((cat) => (
+              <button
+                key={cat._id}
+                type="button"
+                onClick={() => setActiveCategory(cat._id)}
+                aria-pressed={activeCategory === cat._id}
+                className={`whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
+                  activeCategory === cat._id ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
+                }`}
+              >
+                {cat.emoji_icon ? `${cat.emoji_icon} ` : ''}{cat.name}
+              </button>
+            ))}
           </div>
-          <span className="font-bold pr-2 hidden sm:block">${cartTotal.toFixed(2)}</span>
-        </button>
+        </nav>
       )}
 
-      {/* Shopping Cart Sidebar */}
-      <div className={`fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 transition-opacity duration-300 ${isCartOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} onClick={() => setIsCartOpen(false)}></div>
-      
-      <div className={`fixed top-0 right-0 h-full w-full max-w-md bg-white z-50 shadow-2xl flex flex-col transition-transform duration-300 ${isCartOpen ? 'translate-x-0' : 'translate-x-full'}`}>
-        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-          <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2"><ShoppingCart className="text-primary" /> Your Order</h2>
-          <button onClick={() => setIsCartOpen(false)} className="p-2 bg-slate-200 text-slate-500 rounded-full hover:bg-slate-300"><X size={20} /></button>
-        </div>
+      <main className="mx-auto max-w-3xl px-4 py-6 sm:px-6">
+        {menuItems.length === 0 ? (
+          <p className="py-16 text-center text-sm text-slate-500">This restaurant has not added any dishes yet. Please check back soon.</p>
+        ) : (
+          groups.map(({ cat, items }) => (
+            <section key={cat._id} className="mb-8" aria-labelledby={`cat-${cat._id}`}>
+              <h2 id={`cat-${cat._id}`} className="mb-3 text-lg font-semibold text-slate-900">{cat.name}</h2>
+              {cat.description && <p className="-mt-2 mb-3 text-sm text-slate-500">{cat.description}</p>}
+              <ul className="space-y-3">
+                {items.map((item) => {
+                  const available = item.is_available !== false;
+                  const qty = cart[item._id] || 0;
+                  return (
+                    <li key={item._id} className={`card flex gap-4 p-3 ${available ? '' : 'opacity-60'}`}>
+                      <div className="grid size-24 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-100 text-4xl sm:size-28">
+                        {item.image_url
+                          ? <img src={photoUrl(item.image_url, 240)} alt={item.name} loading="lazy" className="size-full object-cover" />
+                          : <span aria-hidden="true">{item.emoji_icon || '🍽️'}</span>}
+                      </div>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
-           {cart.length === 0 ? (
-             <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
-               <ShoppingCart size={64} className="opacity-20" />
-               <p className="font-medium">Your cart is empty.</p>
-             </div>
-           ) : (
-             cart.map(item => (
-               <div key={item._id} className="flex items-center justify-between gap-4">
-                 <div className="flex-1">
-                   <h4 className="font-bold text-slate-800">{item.name}</h4>
-                   <p className="text-primary font-bold">${(item.price * item.qty).toFixed(2)}</p>
-                 </div>
-                 <div className="flex items-center gap-3 bg-slate-100 rounded-full p-1">
-                   <button onClick={() => updateQty(item._id, -1)} className="w-8 h-8 flex items-center justify-center bg-white rounded-full text-slate-600 shadow-sm"><Minus size={16} /></button>
-                   <span className="font-bold text-slate-800 w-4 text-center">{item.qty}</span>
-                   <button onClick={() => updateQty(item._id, 1)} className="w-8 h-8 flex items-center justify-center bg-white rounded-full text-slate-600 shadow-sm"><Plus size={16} /></button>
-                 </div>
-                 <button onClick={() => removeItem(item._id)} className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-xl"><X size={20} /></button>
-               </div>
-             ))
-           )}
-        </div>
+                      <div className="flex min-w-0 flex-1 flex-col">
+                        <div className="flex items-start justify-between gap-3">
+                          <h3 className="text-base font-semibold leading-snug text-slate-900">{item.name}</h3>
+                          <span className="shrink-0 text-base font-semibold tabular-nums text-slate-900">{money(item.price)}</span>
+                        </div>
+                        {item.description && <p className="mt-1 line-clamp-2 text-sm text-slate-500">{item.description}</p>}
 
-        <div className="p-6 border-t border-slate-100 bg-slate-50 space-y-4">
-           <div className="flex gap-4">
-             <input type="text" value={tableNumber} onChange={e => setTableNumber(e.target.value)} placeholder="Table # (if dine-in)" className="w-1/3 px-4 py-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-primary" />
-             <input type="text" value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Your Name" className="flex-1 px-4 py-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-primary" />
-           </div>
-           {orderError && (
-             <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{orderError}</div>
-           )}
-           <div className="flex justify-between items-center pt-2">
-             <span className="text-slate-500 font-medium">Total</span>
-             <span className="text-3xl font-extrabold text-slate-800">${cartTotal.toFixed(2)}</span>
-           </div>
-           <button 
-             disabled={cart.length === 0 || submitting}
-             onClick={handleCheckout}
-             className="w-full bg-gradient-to-r from-primary to-secondary disabled:from-slate-300 disabled:to-slate-400 text-white py-4 rounded-2xl font-bold shadow-lg hover:-translate-y-0.5 transition-all flex items-center justify-center gap-2"
-           >
-             {submitting ? 'Processing...' : 'Place Order'} <ArrowRight size={20} />
-           </button>
+                        {(item.dietary_tags?.length > 0 || item.allergens?.length > 0) && (
+                          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                            {item.dietary_tags?.map((tag) => <span key={tag} className="badge badge-ready">{tag}</span>)}
+                            {item.allergens?.length > 0 && <span className="text-xs text-slate-500">Contains: {item.allergens.join(', ')}</span>}
+                          </div>
+                        )}
+
+                        <div className="mt-auto flex justify-end pt-3">
+                          {!available ? (
+                            <span className="badge badge-cancelled">Sold out</span>
+                          ) : qty > 0 ? (
+                            <Stepper qty={qty} onChange={(n) => setQty(item._id, n)} label={item.name} />
+                          ) : (
+                            <button type="button" onClick={() => setQty(item._id, 1)} className="btn btn-primary btn-sm" aria-label={`Add ${item.name} to your order`}>
+                              <Plus size={14} /> Add
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </section>
+          ))
+        )}
+      </main>
+
+      {/* Order bar */}
+      {cartCount > 0 && !isCartOpen && (
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white p-3 shadow-[0_-4px_12px_rgb(0_0_0/0.05)]">
+          <button type="button" onClick={() => setIsCartOpen(true)} className="btn btn-primary btn-lg mx-auto flex w-full max-w-3xl justify-between">
+            <span className="flex items-center gap-2"><ShoppingBag size={18} /> View order · {cartCount} {cartCount === 1 ? 'item' : 'items'}</span>
+            <span className="tabular-nums">{money(cartTotal)}</span>
+          </button>
         </div>
-      </div>
+      )}
+
+      {/* Order sheet */}
+      {isCartOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label="Your order">
+          <button type="button" aria-label="Close" className="absolute inset-0 bg-slate-900/50" onClick={() => setIsCartOpen(false)} />
+          <form onSubmit={handleCheckout} className="animate-fade-in-up relative flex max-h-[92vh] w-full max-w-lg flex-col rounded-t-2xl bg-white shadow-xl sm:rounded-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+              <h2 className="text-lg font-semibold text-slate-900">Your order</h2>
+              <button type="button" onClick={() => setIsCartOpen(false)} aria-label="Close" className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100"><X size={18} /></button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5">
+              <ul className="divide-y divide-slate-100">
+                {cartLines.map(({ item, qty }) => (
+                  <li key={item._id} className="flex items-center justify-between gap-3 py-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-slate-900">{item.name}</p>
+                      <p className="text-sm tabular-nums text-slate-500">{money(item.price * qty)}</p>
+                    </div>
+                    <Stepper qty={qty} onChange={(n) => setQty(item._id, n)} label={item.name} />
+                  </li>
+                ))}
+              </ul>
+
+              <div className="space-y-4 border-t border-slate-100 py-4">
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label htmlFor="table" className="label">Table</label>
+                    <input id="table" value={tableNumber} onChange={(e) => setTableNumber(e.target.value)} maxLength={20} inputMode="text" placeholder="e.g. 12" className="input" />
+                  </div>
+                  <div className="col-span-2">
+                    <label htmlFor="cname" className="label">Your name <span className="font-normal text-slate-400">(optional)</span></label>
+                    <input id="cname" value={customerName} onChange={(e) => setCustomerName(e.target.value)} maxLength={50} autoComplete="given-name" className="input" />
+                  </div>
+                </div>
+                <div>
+                  <label htmlFor="note" className="label">Note for the kitchen <span className="font-normal text-slate-400">(optional)</span></label>
+                  <textarea id="note" rows={2} value={note} onChange={(e) => setNote(e.target.value)} maxLength={500} placeholder="Allergies, no onions, extra sauce…" className="input" />
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-3 border-t border-slate-200 px-5 py-4">
+              <div className="flex items-baseline justify-between">
+                <span className="text-sm text-slate-500">Subtotal</span>
+                <span className="text-xl font-semibold tabular-nums text-slate-900">{money(cartTotal)}</span>
+              </div>
+              {orderError && <p role="alert" className="alert-error">{orderError}</p>}
+              <button type="submit" disabled={submitting || cartLines.length === 0} className="btn btn-primary btn-lg w-full">
+                {submitting ? 'Placing order…' : 'Place order'}
+              </button>
+              <p className="text-center text-xs text-slate-400">Taxes, if any, are added when you place the order.</p>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   );
 };

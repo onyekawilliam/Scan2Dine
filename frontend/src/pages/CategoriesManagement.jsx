@@ -1,57 +1,68 @@
 import React, { useState, useEffect } from 'react';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
-import { GripVertical, Edit2, Trash2, Plus, Save, X } from 'lucide-react';
+import { GripVertical, Pencil, Plus, Save, Tags, Trash2, X } from 'lucide-react';
 import api from '../utils/api';
+import { errorMessage, } from '../utils/format';
+import PageHeader from '../components/ui/PageHeader';
+import EmptyState from '../components/ui/EmptyState';
+import { useToast } from '../components/ui/toastContext';
+
+const BLANK = { name: '', description: '', emoji_icon: '🍽️' };
 
 function CategoriesManagement() {
+  const toast = useToast();
   const [categories, setCategories] = useState([]);
+  const [counts, setCounts] = useState({}); // category id -> number of items
   const [loading, setLoading] = useState(true);
-  const [formData, setFormData] = useState({ name: '', description: '', emoji_icon: '🍽️' });
+  const [form, setForm] = useState(BLANK);
   const [editingId, setEditingId] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  const fetchCategories = async () => {
-    try {
-      const res = await api.get('/menu/categories');
-      if (res.data.success) {
-        setCategories(res.data.data.categories || res.data.data);
-      }
-    } catch (err) {
-      console.error('Failed to fetch categories', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    fetchCategories();
+    (async () => {
+      try {
+        const [catRes, itemRes] = await Promise.all([api.get('/menu/categories'), api.get('/menu/items')]);
+        setCategories(catRes.data.data.categories || catRes.data.data);
+        const tally = {};
+        (itemRes.data.data.items || itemRes.data.data).forEach((item) => {
+          const id = typeof item.category_id === 'object' ? item.category_id?._id : item.category_id;
+          tally[id] = (tally[id] || 0) + 1;
+        });
+        setCounts(tally);
+      } catch (err) {
+        toast.error(errorMessage(err, 'Could not load your categories.'));
+      } finally {
+        setLoading(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const errorMessage = (err, fallback) =>
-    err.response?.data?.error?.message || err.response?.data?.message || fallback;
+  const set = (key) => (e) => setForm((prev) => ({ ...prev, [key]: e.target.value }));
+
+  const resetForm = () => {
+    setEditingId(null);
+    setForm(BLANK);
+    setError('');
+  };
 
   const handleDragEnd = async (result) => {
     if (!result.destination || result.destination.index === result.source.index) return;
 
     const previous = categories;
-    const items = Array.from(categories);
-    const [reorderedItem] = items.splice(result.source.index, 1);
-    items.splice(result.destination.index, 0, reorderedItem);
+    const reordered = Array.from(categories);
+    const [moved] = reordered.splice(result.source.index, 1);
+    reordered.splice(result.destination.index, 0, moved);
 
     // Show the new order immediately, save it, and roll back if the server refuses.
-    setCategories(items);
+    setCategories(reordered);
     try {
-      await api.put('/menu/categories/reorder', { order: items.map((c) => c._id) });
+      await api.put('/menu/categories/reorder', { order: reordered.map((c) => c._id) });
     } catch (err) {
       setCategories(previous);
-      setError(errorMessage(err, 'Could not save the new order. Please try again.'));
+      toast.error(errorMessage(err, 'Could not save the new order. Please try again.'));
     }
-  };
-
-  const resetForm = () => {
-    setEditingId(null);
-    setFormData({ name: '', description: '', emoji_icon: '🍽️' });
   };
 
   const handleSubmit = async (e) => {
@@ -60,17 +71,15 @@ function CategoriesManagement() {
     setSaving(true);
     setError('');
     try {
-      const payload = {
-        name: formData.name.trim(),
-        description: formData.description.trim(),
-        emoji_icon: formData.emoji_icon.trim(),
-      };
+      const payload = { name: form.name.trim(), description: form.description.trim(), emoji_icon: form.emoji_icon.trim() };
       if (editingId) {
         const res = await api.put(`/menu/categories/${editingId}`, payload);
-        if (res.data.success) setCategories(categories.map((c) => (c._id === editingId ? res.data.data : c)));
+        setCategories((prev) => prev.map((c) => (c._id === editingId ? res.data.data : c)));
+        toast.success('Category updated.');
       } else {
         const res = await api.post('/menu/categories', payload);
-        if (res.data.success) setCategories([...categories, res.data.data]);
+        setCategories((prev) => [...prev, res.data.data]);
+        toast.success(`${payload.name} created.`);
       }
       resetForm();
     } catch (err) {
@@ -80,145 +89,111 @@ function CategoriesManagement() {
     }
   };
 
-  const handleEdit = (category) => {
+  const startEdit = (category) => {
     setError('');
     setEditingId(category._id);
-    setFormData({ name: category.name, description: category.description || '', emoji_icon: category.emoji_icon || '🍽️' });
+    setForm({ name: category.name, description: category.description || '', emoji_icon: category.emoji_icon || '🍽️' });
   };
 
   const handleDelete = async (category) => {
     if (!window.confirm(`Delete the "${category.name}" category?`)) return;
-    setError('');
     try {
       await api.delete(`/menu/categories/${category._id}`);
-      setCategories(categories.filter((c) => c._id !== category._id));
+      setCategories((prev) => prev.filter((c) => c._id !== category._id));
       if (editingId === category._id) resetForm();
+      toast.success('Category deleted.');
     } catch (err) {
       // e.g. 409 "This category still has 3 menu items. Move or delete them first."
-      setError(errorMessage(err, 'Could not delete this category. Please try again.'));
+      toast.error(errorMessage(err, 'Could not delete this category. Please try again.'));
     }
   };
 
   return (
-    <div className="space-y-6 animate-fade-in-up">
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary">Categories Management</h1>
-        <p className="text-slate-500">Organize your menu structure. Drag to reorder categories.</p>
-      </div>
+    <div>
+      <PageHeader title="Categories" description="Group your dishes. Guests see categories in this order, so drag to rearrange." />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Left: Form */}
-        <div className="lg:col-span-1">
-          <div className="bg-white/95 backdrop-blur-xl rounded-[2rem] shadow-[0_8px_32px_rgba(0,0,0,0.05)] border border-slate-100 p-6 sticky top-8">
-            <h3 className="text-xl font-bold text-slate-800 mb-6">{editingId ? 'Edit Category' : 'Add New Category'}</h3>
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Category Name</label>
-                <input 
-                  required
-                  value={formData.name}
-                  onChange={(e) => setFormData({...formData, name: e.target.value})}
-                  type="text" 
-                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary outline-none" 
-                  placeholder="e.g. Appetizers" 
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Description (Optional)</label>
-                <textarea 
-                  rows="3"
-                  value={formData.description}
-                  onChange={(e) => setFormData({...formData, description: e.target.value})}
-                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary outline-none" 
-                  placeholder="A brief description..." 
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Emoji Icon</label>
-                <input 
-                  value={formData.emoji_icon}
-                  onChange={(e) => setFormData({...formData, emoji_icon: e.target.value})}
-                  type="text" 
-                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary outline-none" 
-                />
-              </div>
-              {error && (
-                <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>
+      <div className="grid gap-6 lg:grid-cols-3">
+        <form onSubmit={handleSubmit} className="card card-pad h-fit lg:sticky lg:top-8">
+          <h2 className="card-title">{editingId ? 'Edit category' : 'New category'}</h2>
+          <div className="mt-4 space-y-4">
+            <div>
+              <label htmlFor="cat-name" className="label">Name</label>
+              <input id="cat-name" required maxLength={50} value={form.name} onChange={set('name')} placeholder="e.g. Starters" className="input" />
+            </div>
+            <div>
+              <label htmlFor="cat-desc" className="label">Description <span className="font-normal text-slate-400">(optional)</span></label>
+              <textarea id="cat-desc" rows={2} maxLength={200} value={form.description} onChange={set('description')} className="input" />
+            </div>
+            <div>
+              <label htmlFor="cat-emoji" className="label">Emoji icon</label>
+              <input id="cat-emoji" maxLength={8} value={form.emoji_icon} onChange={set('emoji_icon')} className="input w-24 text-center text-lg" />
+            </div>
+            {error && <p role="alert" className="alert-error">{error}</p>}
+            <div className="flex gap-2">
+              <button type="submit" disabled={saving} className="btn btn-primary flex-1">
+                {editingId ? <><Save size={16} /> Save</> : <><Plus size={16} /> Create</>}
+              </button>
+              {editingId && (
+                <button type="button" onClick={resetForm} aria-label="Cancel editing" className="btn btn-secondary !px-3"><X size={16} /></button>
               )}
-              <div className="pt-4 flex gap-3">
-                <button type="submit" disabled={saving} className="flex-1 flex justify-center items-center gap-2 bg-gradient-to-r from-primary to-secondary text-white py-3 rounded-xl font-bold shadow-md hover:shadow-lg hover:-translate-y-0.5 disabled:opacity-60 transition-all">
-                  {editingId ? <><Save size={18} /> Update</> : <><Plus size={18} /> Create</>}
-                </button>
-                {editingId && (
-                  <button type="button" aria-label="Cancel editing" onClick={resetForm} className="px-4 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-colors">
-                    <X size={18} />
-                  </button>
-                )}
-              </div>
-            </form>
+            </div>
           </div>
-        </div>
+        </form>
 
-        {/* Right: Drag and Drop List */}
-        <div className="lg:col-span-2">
-          <div className="bg-white/95 backdrop-blur-xl rounded-[2rem] shadow-[0_8px_32px_rgba(0,0,0,0.05)] border border-slate-100 p-6">
-            <h3 className="text-xl font-bold text-slate-800 mb-6 flex justify-between items-center">
-              Menu Categories
-              <span className="text-sm font-medium bg-slate-100 px-3 py-1 rounded-full text-slate-600">{categories.length} Total</span>
-            </h3>
+        <section className="card lg:col-span-2" aria-label="Your categories">
+          <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+            <h2 className="card-title">Your categories</h2>
+            <span className="badge badge-neutral">{categories.length}</span>
+          </div>
 
-            {loading ? (
-              <div className="text-center py-12 text-slate-400">Loading categories...</div>
-            ) : categories.length === 0 ? (
-              <div className="text-center py-12 text-slate-400 border-2 border-dashed border-slate-200 rounded-xl">
-                No categories yet. Create your first category!
-              </div>
-            ) : (
-              <DragDropContext onDragEnd={handleDragEnd}>
-                <Droppable droppableId="categories">
-                  {(provided) => (
-                    <div {...provided.droppableProps} ref={provided.innerRef} className="space-y-3">
-                      {categories.map((category, index) => (
+          {loading ? (
+            <p className="p-12 text-center text-sm text-slate-500">Loading categories…</p>
+          ) : categories.length === 0 ? (
+            <EmptyState icon={Tags} title="No categories yet" description="Create your first category on the left. Starters, Mains and Drinks are a good start." />
+          ) : (
+            <DragDropContext onDragEnd={handleDragEnd}>
+              <Droppable droppableId="categories">
+                {(provided) => (
+                  <ul {...provided.droppableProps} ref={provided.innerRef} className="divide-y divide-slate-100">
+                    {categories.map((category, index) => {
+                      const count = counts[category._id] || 0;
+                      return (
                         <Draggable key={category._id} draggableId={category._id} index={index}>
-                          {(provided, snapshot) => (
-                            <div
-                              ref={provided.innerRef}
-                              {...provided.draggableProps}
-                              className={`flex items-center gap-4 p-4 rounded-xl border transition-all ${snapshot.isDragging ? 'bg-white shadow-xl border-primary ring-2 ring-primary/20 z-50' : 'bg-white border-slate-100 hover:border-slate-300'}`}
+                          {(drag, snapshot) => (
+                            <li
+                              ref={drag.innerRef}
+                              {...drag.draggableProps}
+                              className={`flex items-center gap-3 bg-white px-4 py-3 ${snapshot.isDragging ? 'rounded-xl shadow-lg ring-1 ring-slate-200' : ''}`}
                             >
-                              <div {...provided.dragHandleProps} className="p-2 text-slate-400 hover:text-slate-700 cursor-grab active:cursor-grabbing">
-                                <GripVertical size={20} />
+                              <span {...drag.dragHandleProps} aria-label={`Reorder ${category.name}`} className="cursor-grab rounded p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 active:cursor-grabbing">
+                                <GripVertical size={18} />
+                              </span>
+                              <span className="grid size-10 shrink-0 place-items-center rounded-lg bg-slate-100 text-xl" aria-hidden="true">{category.emoji_icon || '🍽️'}</span>
+                              <div className="min-w-0 flex-1">
+                                <h3 className="truncate text-sm font-semibold text-slate-900">{category.name}</h3>
+                                <p className="truncate text-xs text-slate-500">
+                                  {count} {count === 1 ? 'item' : 'items'}
+                                  {category.description ? ` · ${category.description}` : ''}
+                                </p>
                               </div>
-                              
-                              <div className="w-12 h-12 bg-slate-50 rounded-lg flex items-center justify-center text-2xl border border-slate-100 shrink-0">
-                                {category.emoji_icon || '🍽️'}
-                              </div>
-                              
-                              <div className="flex-1">
-                                <h4 className="font-bold text-slate-800">{category.name}</h4>
-                                {category.description && <p className="text-sm text-slate-500 truncate">{category.description}</p>}
-                              </div>
-
-                              <div className="flex gap-2">
-                                <button type="button" aria-label={`Edit ${category.name}`} onClick={() => handleEdit(category)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors">
-                                  <Edit2 size={18} />
-                                </button>
-                                <button type="button" aria-label={`Delete ${category.name}`} onClick={() => handleDelete(category)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors">
-                                  <Trash2 size={18} />
-                                </button>
-                              </div>
-                            </div>
+                              <button type="button" aria-label={`Edit ${category.name}`} onClick={() => startEdit(category)} className="rounded-md p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900">
+                                <Pencil size={16} />
+                              </button>
+                              <button type="button" aria-label={`Delete ${category.name}`} onClick={() => handleDelete(category)} className="rounded-md p-2 text-slate-500 hover:bg-red-50 hover:text-red-600">
+                                <Trash2 size={16} />
+                              </button>
+                            </li>
                           )}
                         </Draggable>
-                      ))}
-                      {provided.placeholder}
-                    </div>
-                  )}
-                </Droppable>
-              </DragDropContext>
-            )}
-          </div>
-        </div>
+                      );
+                    })}
+                    {provided.placeholder}
+                  </ul>
+                )}
+              </Droppable>
+            </DragDropContext>
+          )}
+        </section>
       </div>
     </div>
   );

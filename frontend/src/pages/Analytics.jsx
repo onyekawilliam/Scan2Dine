@@ -1,34 +1,54 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, AreaChart, Area,
-  PieChart, Pie, Cell, Legend, BarChart, Bar
+import { Link } from 'react-router-dom';
+import {
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, PieChart, Pie, Cell, Legend,
 } from 'recharts';
-import { DollarSign, ShoppingBag, TrendingUp, Users, Calendar as CalendarIcon, Download } from 'lucide-react';
+import { BarChart3, Download } from 'lucide-react';
 import api from '../utils/api';
+import { downloadCsv } from '../utils/csv';
+import { money, errorMessage } from '../utils/format';
+import { ORDER_STATUS } from '../constants/orderStatus';
+import PageHeader from '../components/ui/PageHeader';
+import EmptyState from '../components/ui/EmptyState';
+import { useToast } from '../components/ui/toastContext';
 
-const COLORS = ['#28a745', '#0088FE', '#FFBB28', '#FF8042'];
+// Same meaning as the status badges: amber waiting, blue accepted, indigo in progress, green ready.
+const STATUS_COLORS = {
+  pending: '#f59e0b', accepted: '#3b82f6', preparing: '#6366f1', ready: '#10b981', completed: '#94a3b8', cancelled: '#ef4444',
+};
+
+function Stat({ label, value, hint }) {
+  return (
+    <div className="card card-pad">
+      <p className="text-sm text-slate-500">{label}</p>
+      <p className="mt-1 text-2xl font-semibold tabular-nums text-slate-900">{value}</p>
+      {hint && <p className="mt-1 text-xs text-slate-400">{hint}</p>}
+    </div>
+  );
+}
 
 function Analytics() {
+  const toast = useToast();
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchAnalytics = async () => {
+    (async () => {
       try {
         const res = await api.get('/analytics/dashboard');
-        if (res.data.success) {
-          setStats(res.data.data);
-        }
+        if (res.data.success) setStats(res.data.data);
       } catch (err) {
-        console.error(err);
+        toast.error(errorMessage(err, 'Could not load analytics.'));
       } finally {
         setLoading(false);
       }
-    };
-    fetchAnalytics();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (loading) return <div className="p-12 text-center text-slate-500">Loading Analytics...</div>;
+  if (loading) return <p className="py-16 text-center text-sm text-slate-500">Loading analytics…</p>;
+
+  const hasOrders = (stats?.total_orders || 0) > 0 || Object.keys(stats?.orders_by_status || {}).length > 0;
 
   // Real revenue and order counts for the last 7 days (days are in UTC).
   const revenueData = (stats?.daily || []).map((d) => ({
@@ -37,142 +57,112 @@ function Analytics() {
     orders: d.orders,
   }));
 
-  const pieData = Object.keys(stats?.orders_by_status || {}).map(key => ({
-    name: key,
-    value: stats.orders_by_status[key]
+  const pieData = Object.entries(stats?.orders_by_status || {}).map(([key, value]) => ({
+    key,
+    name: ORDER_STATUS[key]?.label || key,
+    value,
   }));
 
-  const MetricCard = ({ title, value, icon: Icon, trend, prefix = '' }) => (
-    <div className="bg-white/95 backdrop-blur-xl rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.05)] border border-slate-100 p-6 flex items-center justify-between group hover:shadow-lg transition-all">
-      <div>
-        <p className="text-sm font-medium text-slate-500 mb-1">{title}</p>
-        <h3 className="text-3xl font-black text-slate-800">{prefix}{value}</h3>
-        {trend && (
-          <p className={`text-sm mt-2 flex items-center gap-1 ${trend > 0 ? 'text-green-500' : 'text-red-500'}`}>
-            <TrendingUp size={14} className={trend < 0 ? 'rotate-180' : ''} />
-            {Math.abs(trend)}% vs last week
-          </p>
-        )}
-      </div>
-      <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary/10 to-secondary/10 flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
-        <Icon size={28} />
-      </div>
-    </div>
-  );
+  const exportDailyCsv = () =>
+    downloadCsv(
+      'daily-sales-last-7-days.csv',
+      ['Date (UTC)', 'Orders', 'Revenue'],
+      (stats?.daily || []).map((d) => [d.date, d.orders, d.revenue.toFixed(2)])
+    );
+
+  const averageOrder = stats?.total_orders ? stats.total_revenue / stats.total_orders : 0;
 
   return (
-    <div className="space-y-6 animate-fade-in-up">
-      {/* Header & Date Range */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-secondary">Analytics Dashboard</h1>
-          <p className="text-slate-500">Track your restaurant's performance and revenue.</p>
-        </div>
-        <div className="flex gap-3">
-          <button className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 rounded-xl font-medium text-slate-700 hover:bg-slate-50 shadow-sm">
-            <CalendarIcon size={18} /> This Week
-          </button>
-          <button className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl font-medium hover:bg-primary/90 shadow-md">
-            <Download size={18} /> Export
-          </button>
-        </div>
-      </div>
+    <div>
+      <PageHeader title="Analytics" description="How your restaurant is doing. Cancelled orders are not counted as sales.">
+        <button type="button" onClick={exportDailyCsv} disabled={!hasOrders} className="btn btn-secondary">
+          <Download size={16} /> Export last 7 days
+        </button>
+      </PageHeader>
 
-      {/* Metric Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <MetricCard title="Total Revenue" value={(stats?.total_revenue || 0).toFixed(2)} prefix="$" icon={DollarSign} />
-        <MetricCard title="Total Orders" value={stats?.total_orders || 0} icon={ShoppingBag} />
-        <MetricCard title="Avg. Order Value" value={((stats?.total_revenue || 0) / (stats?.total_orders || 1)).toFixed(2)} prefix="$" icon={TrendingUp} />
-        <MetricCard title="Available Menu Items" value={stats?.menu_items_count || 0} icon={Users} />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Main Chart */}
-        <div className="lg:col-span-2 bg-white/95 backdrop-blur-xl rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.05)] border border-slate-100 p-6">
-          <h3 className="text-lg font-bold text-slate-800 mb-6">Revenue, last 7 days</h3>
-          <div className="h-[300px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={revenueData}>
-                <defs>
-                  <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#667eea" stopOpacity={0.8}/>
-                    <stop offset="95%" stopColor="#667eea" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fill: '#94a3b8'}} />
-                <YAxis axisLine={false} tickLine={false} tick={{fill: '#94a3b8'}} tickFormatter={(value) => `$${value}`} />
-                <RechartsTooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)'}} />
-                <Area type="monotone" dataKey="revenue" stroke="#667eea" strokeWidth={3} fillOpacity={1} fill="url(#colorRevenue)" />
-              </AreaChart>
-            </ResponsiveContainer>
+      {!hasOrders ? (
+        <div className="card">
+          <EmptyState icon={BarChart3} title="No sales yet" description="Your numbers appear here after your first orders. Share your QR code to get started.">
+            <Link to="/dashboard/qr" className="btn btn-primary">Get your QR code</Link>
+          </EmptyState>
+        </div>
+      ) : (
+        <>
+          <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+            <Stat label="Total revenue" value={money(stats.total_revenue)} hint="All time" />
+            <Stat label="Orders" value={stats.total_orders} hint="All time" />
+            <Stat label="Average order" value={money(averageOrder)} />
+            <Stat label="Items on menu" value={stats.menu_items_count} hint="Available to order" />
           </div>
-        </div>
 
-        {/* Status Distribution */}
-        <div className="bg-white/95 backdrop-blur-xl rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.05)] border border-slate-100 p-6">
-          <h3 className="text-lg font-bold text-slate-800 mb-6">Order Distribution</h3>
-          <div className="h-[300px] w-full flex flex-col items-center justify-center">
-            {pieData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
-                    {pieData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+          <div className="mb-6 grid gap-6 lg:grid-cols-3">
+            <section className="card card-pad lg:col-span-2" aria-labelledby="rev-h">
+              <h2 id="rev-h" className="card-title">Revenue, last 7 days</h2>
+              <div className="mt-4 h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={revenueData} margin={{ top: 4, right: 8, left: -8, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} interval={0} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} tickFormatter={(v) => `$${v}`} allowDecimals={false} />
+                    <Tooltip
+                      formatter={(value, name) => (name === 'revenue' ? [money(value), 'Revenue'] : [value, 'Orders'])}
+                      contentStyle={{ borderRadius: 8, border: '1px solid #e2e8f0', boxShadow: '0 4px 12px rgb(0 0 0 / 0.08)', fontSize: 13 }}
+                    />
+                    <Area type="monotone" dataKey="revenue" stroke="#4f46e5" strokeWidth={2} fill="#4f46e5" fillOpacity={0.08} isAnimationActive={false} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </section>
+
+            <section className="card card-pad" aria-labelledby="dist-h">
+              <h2 id="dist-h" className="card-title">Orders by status</h2>
+              <div className="mt-4 h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={55} outerRadius={85} paddingAngle={2} stroke="none" isAnimationActive={false}>
+                      {pieData.map((entry) => <Cell key={entry.key} fill={STATUS_COLORS[entry.key] || '#94a3b8'} />)}
+                    </Pie>
+                    <Tooltip contentStyle={{ borderRadius: 8, border: '1px solid #e2e8f0', fontSize: 13 }} />
+                    <Legend iconType="circle" wrapperStyle={{ fontSize: 12 }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </section>
+          </div>
+
+          <section className="card overflow-hidden" aria-labelledby="top-h">
+            <div className="border-b border-slate-200 px-5 py-4">
+              <h2 id="top-h" className="card-title">Best sellers</h2>
+            </div>
+            {stats.popular_items?.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[420px] border-collapse text-sm">
+                  <thead>
+                    <tr className="table-head">
+                      <th className="px-5 py-3">#</th>
+                      <th className="px-5 py-3">Item</th>
+                      <th className="px-5 py-3 text-right">Sold</th>
+                      <th className="px-5 py-3 text-right">Revenue</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {stats.popular_items.map((item, idx) => (
+                      <tr key={item._id} className="hover:bg-slate-50">
+                        <td className="px-5 py-3 tabular-nums text-slate-400">{idx + 1}</td>
+                        <td className="px-5 py-3 font-medium text-slate-900">{item._id}</td>
+                        <td className="px-5 py-3 text-right tabular-nums text-slate-600">{item.ordersCount}</td>
+                        <td className="px-5 py-3 text-right tabular-nums text-slate-900">{money(item.revenue)}</td>
+                      </tr>
                     ))}
-                  </Pie>
-                  <RechartsTooltip contentStyle={{borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
+                  </tbody>
+                </table>
+              </div>
             ) : (
-              <div className="text-slate-400">No orders data to display</div>
+              <p className="p-8 text-center text-sm text-slate-500">No completed sales yet.</p>
             )}
-          </div>
-        </div>
-      </div>
-
-      {/* Popular Items Table */}
-      <div className="bg-white/95 backdrop-blur-xl rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.05)] border border-slate-100 overflow-hidden">
-        <div className="p-6 border-b border-slate-100">
-          <h3 className="text-lg font-bold text-slate-800">Top Selling Items</h3>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50/80 border-b border-slate-100 text-sm font-semibold text-slate-500 uppercase tracking-wider">
-                <th className="p-4 pl-6">Rank</th>
-                <th className="p-4">Item Name</th>
-                <th className="p-4">Times Ordered</th>
-                <th className="p-4">Revenue</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {stats?.popular_items?.length > 0 ? stats.popular_items.map((item, idx) => (
-                <tr key={idx} className="hover:bg-slate-50/50 transition-colors">
-                  <td className="p-4 pl-6">
-                    {idx < 3 ? (
-                      <span className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-white ${idx === 0 ? 'bg-amber-400' : idx === 1 ? 'bg-slate-400' : 'bg-amber-600'}`}>
-                        #{idx + 1}
-                      </span>
-                    ) : (
-                      <span className="w-8 h-8 rounded-full flex items-center justify-center font-bold text-slate-500 bg-slate-100">#{idx + 1}</span>
-                    )}
-                  </td>
-                  <td className="p-4 font-bold text-slate-800">{item._id}</td>
-                  <td className="p-4 text-slate-600 font-medium">{item.ordersCount}x</td>
-                  <td className="p-4 font-bold text-green-600">${item.revenue.toFixed(2)}</td>
-                </tr>
-              )) : (
-                <tr>
-                  <td colSpan="4" className="p-8 text-center text-slate-400">Not enough data</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
+          </section>
+        </>
+      )}
     </div>
   );
 }
