@@ -56,7 +56,7 @@ Status: **Fixed** = changed and covered by a test or build. **Open** = still nee
 | M10 | Settings model (tax, hours, currency, ordering options) has no routes and no screen. | Open |
 | M11 | No password reset or email verification. | Open (needs an email service) |
 | M12 | `KitchenDisplay` plays `/ping.mp3`, which does not exist. | Open |
-| M13 | Image upload middleware (`multer-storage-cloudinary`) is not in `package.json` and not used by any route. Items use an emoji instead of a photo. | Open |
+| M13 | Image upload middleware (`multer-storage-cloudinary`) was dead code for a package that is not installed. Items could only use an emoji. | Fixed: photo uploads via Cloudinary (signed, direct from the browser; needs the three `CLOUDINARY_*` variables). Verified with fake keys and a stand-in for Cloudinary; **not yet tried against a real Cloudinary account** |
 | M14 | Free-tier hosting with `MOCK_DB=true` loses all data on every restart. Real use needs Atlas. | Open (deployment choice) |
 
 ## Low / polish
@@ -68,11 +68,90 @@ Status: **Fixed** = changed and covered by a test or build. **Open** = still nee
 - `usercontroller.js`, `userroute.js`, `usermodel.js`, `authmodel.js` are empty files.
 - Multi-restaurant isolation was re-checked at the API level (cross-tenant reads, updates, deletes, orders, status changes, analytics and sockets). All blocked; see the tests.
 
-## Not done yet: Phase 2, the UI redesign
+## Test results
 
-The screens still use the original look (many gradients, `bg-clip-text` gradient headings, mixed
-radii). A consistent design system and a visual pass over every screen is the next piece of work.
-It should be done with the app open in a browser so each screen can be reviewed.
+**API suite against the live Render backend:** 52 / 52 passed (cross-restaurant attacks, ordering rules,
+status transitions, auth hardening, socket isolation).
+
+**Browser run (local copy, demo database, desktop and 375px phone width):**
+
+| Flow | Result |
+|---|---|
+| Signed-out `/dashboard` redirects home and opens sign-in | Pass |
+| Login with the demo account; session survives a reload | Pass |
+| Menu: search, edit price, reload keeps it, sold-out toggle | Pass |
+| Customer menu by slug: sold-out item cannot be added, no fake reviews, description shown | Pass |
+| Customer order with blank name and table; tracking page opens | Pass |
+| New order appears on the staff dashboard without refreshing (authenticated socket) | Pass |
+| Accept, Preparing, Ready, Completed; customer tracking follows | Pass |
+| Cancelled order shows the cancelled screen to the customer | Pass |
+| Categories: create, delete empty, delete with items refused, keyboard drag reorder persists | Pass |
+| QR page: PNG, JPG, SVG downloads generate with correct names and types | Pass |
+| Analytics shows real totals, cancelled orders excluded | Pass |
+| Settings: saving the description shows on the customer menu | Pass |
+| Unknown restaurant link shows "Restaurant not found" | Pass |
+| Phone width: no horizontal scroll, cart works | Pass |
+
+Bugs found by that run and fixed in the same pass:
+
+- All Orders: "Export CSV" and the search box did nothing; "1 items" grammar. Now real (CSV export is
+  protected against spreadsheet formula injection from customer-entered names).
+- Analytics: "This Week" and "Export" did nothing. Now a plain label and a real CSV of the 7 days.
+- Live Orders: "Print" did nothing. Now prints an order slip (customer text is HTML-escaped).
+- Tracking page: a completed order still said "Currently in progress...".
+- Customer menu: empty categories showed as tabs.
+
+**Still open after the run**
+
+- 5 of the 6 Settings tabs (hours, payment, notifications, appearance, security) only say
+  "This section is currently under development".
+- The "Added to cart" toast overlaps the restaurant name on phones.
+- Not tested: real email/SMS notifications (not built), photo uploads (not built), the live Vercel UI
+  (the demo password was not typed into the live site), and print/share dialogs (only the code paths
+  were exercised, not the browser dialogs).
+
+## UI redesign (Phase 2)
+
+Every screen was rebuilt on one design system and then reviewed in a browser at desktop and phone width.
+
+**System** (`frontend/src/index.css`, `src/components/ui/`, `src/constants/orderStatus.js`)
+
+- One brand colour (indigo) on a slate base; orange only in the logo. No gradients, no glass effects.
+- Radii: controls 8px, cards 16px. Shadows only on cards and floating layers.
+- Shared classes for buttons, form controls, cards, badges, tables and alerts; shared components for page
+  headers, empty states, status badges and toast notifications (these replace every `alert()`).
+- Order statuses are defined once, so a status has the same word and colour on every screen.
+- Inter font, self-hosted. Reduced-motion is respected. Short, quiet animations only.
+
+**What changed for users**
+
+- Dashboard: grouped sidebar, real mobile navigation (there was none), today's numbers on the home screen,
+  a three-step setup checklist for new restaurants, and helpful empty states everywhere.
+- Kitchen display: back link, live clock, sound toggle (own beep, no file), age colouring, larger touch targets.
+- Order history: expandable order details, working search and status filter, "Load more", CSV export.
+- Menu, categories, QR code, analytics: restyled, with real data and no dead controls.
+- Settings: one real page (profile, address, copyable customer link). The five unbuilt tabs and the
+  non-working "Change Logo" button were removed.
+- Customer menu: restaurant header, category chips, photo cards with dietary tags and allergens,
+  per-dish quantity stepper, order sheet with an optional kitchen note, and a cart that survives a reload.
+- Tracking page: four plain steps, itemised order, stops polling when the order is finished.
+- Landing page and sign-in: rewritten with honest copy; the sign-in box now labels its fields, focuses the
+  first field, and opens in the right mode (it previously could open in the wrong one).
+- Dashboard code is split into separate files: the first download dropped from 948 kB to 311 kB
+  (289 kB to 101 kB compressed), which matters for guests on phones.
+
+**Bugs the review found in the new code, fixed**
+
+- Cart was wiped on reload (saving ran before restoring finished).
+- Charts did not paint in the test browser because of their entrance animation; animation turned off.
+
+**Not done / not verified**
+
+- Not tested on real phones, other browsers, or with an accessibility checker or Lighthouse. Reviewed in
+  one embedded Chromium browser; keyboard drag-and-drop for categories was tested earlier, not re-tested.
+- No dark mode. Currency is still "$" everywhere (`src/utils/format.js` is the one place to change).
+- No "forgot password" flow (needs an email service). No logo upload for the restaurant.
+- Notifications settings, business hours and payments (the five removed tabs) are not built.
 
 ## Running the tests
 
@@ -81,3 +160,21 @@ cd backend
 MOCK_DB=true JWT_SECRET=test PORT=5057 npm start     # terminal 1
 JWT_SECRET=test npm run test:integration             # terminal 2
 ```
+
+## Photo uploads (Cloudinary)
+
+How it works: the dashboard asks the API for a short-lived signature (`GET /api/menu/upload-signature`),
+then uploads the photo straight to Cloudinary. The API secret never reaches the browser and photos never
+pass through the server. Each restaurant uploads into its own folder (`scan2dine/menu/<restaurant id>`),
+and the API only accepts image addresses from that folder, so a restaurant cannot attach photos from
+elsewhere or from another restaurant. Replacing or removing a photo, or deleting the item, also deletes the
+old file from Cloudinary (best effort). Without the Cloudinary variables, uploads answer "not set up yet"
+and items keep their emoji.
+
+Setup:
+
+1. Create a free account at cloudinary.com and open the dashboard.
+2. On Render, add `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY` and `CLOUDINARY_API_SECRET`.
+3. Redeploy. Open Menu, edit an item and choose "Upload photo".
+
+Tests: `backend/tests/uploads.js` (17 checks, run with fake keys; see the header of that file).
