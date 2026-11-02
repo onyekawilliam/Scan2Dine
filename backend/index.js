@@ -6,6 +6,8 @@ const rateLimit = require("express-rate-limit");
 const helmet = require("helmet");
 const morgan = require("morgan");
 const logger = require("./utils/logger");
+const { verifySocketToken } = require("./Middleware/authMiddleware");
+const { fail } = require("./utils/http");
 
 dotenv.config();
 
@@ -22,19 +24,31 @@ const allowedOrigins = process.env.CLIENT_URL
 
 const app = express();
 
+// Render, Vercel and most hosts sit behind one reverse proxy. Without this, every visitor
+// appears to share the proxy's IP address and would share a single rate-limit bucket.
+app.set("trust proxy", 1);
+
 // Security and Logging
 app.use(helmet());
 app.use(morgan('combined', { stream: { write: message => logger.info(message.trim()) } }));
 app.use(cors({ origin: allowedOrigins === "*" ? true : allowedOrigins }));
-app.use(express.json());
+app.use(express.json({ limit: "100kb" }));
 
-// Rate Limiting (100 requests per 15 minutes)
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, 
-  max: 100,
-  message: { success: false, error: { code: "RATE_LIMIT_EXCEEDED", message: "Too many requests, please try again later." } }
-});
-app.use("/api/", apiLimiter);
+// Rate limiting. The general limit is generous because dashboards and order-tracking pages poll.
+const limiter = (windowMs, max, message) =>
+  rateLimit({
+    windowMs,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { success: false, message, error: { code: "RATE_LIMIT_EXCEEDED", message } },
+  });
+
+app.use("/api/", limiter(15 * 60 * 1000, 600, "Too many requests, please try again later."));
+// Brute-force protection for logins and sign-ups, and spam protection for customer orders.
+app.use("/api/auth/login", limiter(15 * 60 * 1000, 20, "Too many login attempts. Please try again in 15 minutes."));
+app.use("/api/auth/register", limiter(60 * 60 * 1000, 10, "Too many sign-ups from this network. Please try again later."));
+app.post("/api/public/orders", limiter(60 * 60 * 1000, 40, "You have placed too many orders recently. Please ask the staff for help."));
 
 // Import Routes
 const authRoute = require("./Routes/authroute");
@@ -142,12 +156,20 @@ const io = new Server(server, {
   }
 });
 
+// Staff sockets authenticate with the same JWT as the REST API. The restaurant id comes from the
+// verified token, so a client can never subscribe to another restaurant's live orders.
+io.use(async (socket, next) => {
+  socket.restaurantId = await verifySocketToken(socket.handshake.auth?.token);
+  next();
+});
+
 io.on("connection", (socket) => {
   logger.info(`New client connected: ${socket.id}`);
-  
-  socket.on("join_restaurant", (restaurantId) => {
-    socket.join(restaurantId);
-    logger.info(`Socket ${socket.id} joined room ${restaurantId}`);
+
+  socket.on("join_restaurant", () => {
+    if (!socket.restaurantId) return;
+    socket.join(socket.restaurantId);
+    logger.info(`Socket ${socket.id} joined room ${socket.restaurantId}`);
   });
 
   socket.on("disconnect", () => {
@@ -157,6 +179,15 @@ io.on("connection", (socket) => {
 
 // Export io so controllers can use it
 app.set("io", io);
+
+// Unknown API routes and unexpected errors (e.g. malformed JSON) get a JSON answer, never a stack trace.
+app.use("/api", (req, res) => fail(res, 404, "NOT_FOUND", "Route not found"));
+app.use((err, req, res, next) => {
+  if (err.type === "entity.parse.failed") return fail(res, 400, "BAD_REQUEST", "Malformed JSON body");
+  if (err.type === "entity.too.large") return fail(res, 413, "PAYLOAD_TOO_LARGE", "Request body too large");
+  logger.error(err.stack || String(err));
+  return fail(res, 500, "SERVER_ERROR", "Something went wrong. Please try again.");
+});
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => {

@@ -19,5 +19,7 @@ const menuItemSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+menuItemSchema.index({ restaurant_id: 1, category_id: 1 });
+
 const MenuItem = mongoose.model("MenuItem", menuItemSchema);
 module.exports = MenuItem;

@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { QrCode, Smartphone, LineChart, ArrowRight, Menu } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import PhoneMockup from '../components/PhoneMockup';
 import FeatureCard from '../components/FeatureCard';
 import Logo from '../components/Logo';
@@ -10,10 +10,17 @@ function LandingPage() {
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState('signin');
 
+  const location = useLocation();
+
   const openAuth = (mode) => {
     setAuthMode(mode);
     setIsAuthOpen(true);
   };
+
+  // Sent here by ProtectedRoute after visiting /dashboard while signed out.
+  useEffect(() => {
+    if (location.state?.authRequired) openAuth('signin');
+  }, [location.state]);
 
   return (
     <div className="min-h-screen bg-slate-50 relative overflow-hidden font-sans">

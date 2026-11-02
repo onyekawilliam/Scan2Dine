@@ -2,6 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import LandingPage from './pages/LandingPage';
 import DashboardLayout from './layouts/DashboardLayout';
+import ProtectedRoute from './components/ProtectedRoute';
 import LiveOrders from './pages/LiveOrders';
 import AllOrders from './pages/AllOrders';
 import MenuManagement from './pages/MenuManagement';
@@ -21,7 +22,7 @@ function App() {
         <Route path="/" element={<LandingPage />} />
         <Route path="/menu/:restaurantId" element={<CustomerView />} />
         <Route path="/track/:orderId" element={<OrderTracking />} />
-        <Route path="/dashboard" element={<DashboardLayout />}>
+        <Route path="/dashboard" element={<ProtectedRoute><DashboardLayout /></ProtectedRoute>}>
           <Route index element={<LiveOrders />} />
           <Route path="kitchen" element={<KitchenDisplay />} />
           <Route path="orders" element={<AllOrders />} />

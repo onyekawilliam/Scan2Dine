@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { CheckCircle2, Clock, ChefHat, Package, ChevronRight } from 'lucide-react';
+import { CheckCircle2, XCircle, Clock, ChefHat, Package, ChevronRight } from 'lucide-react';
 import Logo from '../components/Logo';
 import api from '../utils/api';
 
@@ -38,7 +38,10 @@ const OrderTracking = () => {
   ];
 
   const currentStatus = order?.status || 'pending';
-  const currentStepIndex = steps.findIndex(s => s.id === currentStatus);
+  const isCancelled = currentStatus === 'cancelled';
+  // "accepted" sits between received and preparing, so it keeps the first step as the current one.
+  const stepStatus = currentStatus === 'accepted' ? 'pending' : currentStatus;
+  const currentStepIndex = steps.findIndex(s => s.id === stepStatus);
 
   if (loading) return <div className="min-h-screen flex items-center justify-center text-slate-500">Loading tracking info...</div>;
   if (!order) return <div className="min-h-screen flex items-center justify-center text-slate-500">Order not found</div>;
@@ -54,18 +57,21 @@ const OrderTracking = () => {
 
       <main className="p-6 max-w-2xl mx-auto mt-8 animate-fade-in-up">
         <div className="bg-white p-8 rounded-[2rem] shadow-[0_8px_32px_rgba(0,0,0,0.05)] border border-slate-100 text-center mb-8">
-          <div className="w-20 h-20 bg-green-100 text-green-500 rounded-full flex items-center justify-center mx-auto mb-6">
-            <CheckCircle2 size={40} />
+          <div className={`w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 ${isCancelled ? 'bg-red-100 text-red-500' : 'bg-green-100 text-green-500'}`}>
+            {isCancelled ? <XCircle size={40} /> : <CheckCircle2 size={40} />}
           </div>
           <h2 className="text-3xl font-black text-slate-800 mb-2">
-            {currentStatus === 'completed' ? 'Order Served!' : 'Order Confirmed!'}
+            {isCancelled ? 'Order Cancelled' : currentStatus === 'completed' ? 'Order Served!' : 'Order Received!'}
           </h2>
+          {isCancelled && <p className="text-slate-500 mb-2">The restaurant could not prepare this order. Please speak to the staff.</p>}
+          {order.restaurant_name && <p className="text-slate-500 font-medium mb-1">{order.restaurant_name}</p>}
           <p className="text-slate-500 font-medium">Order #{order.order_number}</p>
           <div className="mt-4 p-4 bg-slate-50 rounded-2xl inline-block">
              <p className="text-sm font-bold text-slate-700">Total: ${order.total.toFixed(2)}</p>
           </div>
         </div>
 
+        {!isCancelled && (
         <div className="bg-white p-8 rounded-[2rem] shadow-[0_8px_32px_rgba(0,0,0,0.05)] border border-slate-100">
           <h3 className="text-xl font-bold text-slate-800 mb-8 border-b border-slate-100 pb-4">Live Tracking</h3>
           
@@ -96,12 +102,15 @@ const OrderTracking = () => {
             })}
           </div>
         </div>
+        )}
 
-        <div className="mt-8 text-center">
-          <Link to={`/menu/${order.restaurant_id}`} className="text-primary font-bold hover:underline flex items-center justify-center gap-1">
-             Order More Items <ChevronRight size={18} />
-          </Link>
-        </div>
+        {order.restaurant_slug && (
+          <div className="mt-8 text-center">
+            <Link to={`/menu/${order.restaurant_slug}`} className="text-primary font-bold hover:underline flex items-center justify-center gap-1">
+               Order More Items <ChevronRight size={18} />
+            </Link>
+          </div>
+        )}
       </main>
     </div>
   );

@@ -8,6 +8,8 @@ function CategoriesManagement() {
   const [loading, setLoading] = useState(true);
   const [formData, setFormData] = useState({ name: '', description: '', emoji_icon: '🍽️' });
   const [editingId, setEditingId] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
   const fetchCategories = async () => {
     try {
@@ -26,45 +28,75 @@ function CategoriesManagement() {
     fetchCategories();
   }, []);
 
-  const handleDragEnd = (result) => {
-    if (!result.destination) return;
-    
+  const errorMessage = (err, fallback) =>
+    err.response?.data?.error?.message || err.response?.data?.message || fallback;
+
+  const handleDragEnd = async (result) => {
+    if (!result.destination || result.destination.index === result.source.index) return;
+
+    const previous = categories;
     const items = Array.from(categories);
     const [reorderedItem] = items.splice(result.source.index, 1);
     items.splice(result.destination.index, 0, reorderedItem);
-    
+
+    // Show the new order immediately, save it, and roll back if the server refuses.
     setCategories(items);
-    // Ideally here we would send an API request to update the 'order' field in DB for all items
-    // api.put('/menu/categories/reorder', { newOrder: items.map(i => i._id) });
+    try {
+      await api.put('/menu/categories/reorder', { order: items.map((c) => c._id) });
+    } catch (err) {
+      setCategories(previous);
+      setError(errorMessage(err, 'Could not save the new order. Please try again.'));
+    }
+  };
+
+  const resetForm = () => {
+    setEditingId(null);
+    setFormData({ name: '', description: '', emoji_icon: '🍽️' });
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (saving) return;
+    setSaving(true);
+    setError('');
     try {
+      const payload = {
+        name: formData.name.trim(),
+        description: formData.description.trim(),
+        emoji_icon: formData.emoji_icon.trim(),
+      };
       if (editingId) {
-        // Mock update API call (not yet implemented in backend, but will simulate locally)
-        setCategories(categories.map(c => c._id === editingId ? { ...c, ...formData } : c));
-        setEditingId(null);
+        const res = await api.put(`/menu/categories/${editingId}`, payload);
+        if (res.data.success) setCategories(categories.map((c) => (c._id === editingId ? res.data.data : c)));
       } else {
-        const res = await api.post('/menu/categories', formData);
-        if (res.data.success) {
-          setCategories([...categories, res.data.data]);
-        }
+        const res = await api.post('/menu/categories', payload);
+        if (res.data.success) setCategories([...categories, res.data.data]);
       }
-      setFormData({ name: '', description: '', emoji_icon: '🍽️' });
+      resetForm();
     } catch (err) {
-      console.error(err);
+      setError(errorMessage(err, 'Could not save this category. Please try again.'));
+    } finally {
+      setSaving(false);
     }
   };
 
   const handleEdit = (category) => {
+    setError('');
     setEditingId(category._id);
     setFormData({ name: category.name, description: category.description || '', emoji_icon: category.emoji_icon || '🍽️' });
   };
 
-  const handleDelete = async (id) => {
-    // Mock delete since we haven't built the DELETE route yet
-    setCategories(categories.filter(c => c._id !== id));
+  const handleDelete = async (category) => {
+    if (!window.confirm(`Delete the "${category.name}" category?`)) return;
+    setError('');
+    try {
+      await api.delete(`/menu/categories/${category._id}`);
+      setCategories(categories.filter((c) => c._id !== category._id));
+      if (editingId === category._id) resetForm();
+    } catch (err) {
+      // e.g. 409 "This category still has 3 menu items. Move or delete them first."
+      setError(errorMessage(err, 'Could not delete this category. Please try again.'));
+    }
   };
 
   return (
@@ -110,12 +142,15 @@ function CategoriesManagement() {
                   className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary outline-none" 
                 />
               </div>
+              {error && (
+                <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>
+              )}
               <div className="pt-4 flex gap-3">
-                <button type="submit" className="flex-1 flex justify-center items-center gap-2 bg-gradient-to-r from-primary to-secondary text-white py-3 rounded-xl font-bold shadow-md hover:shadow-lg hover:-translate-y-0.5 transition-all">
+                <button type="submit" disabled={saving} className="flex-1 flex justify-center items-center gap-2 bg-gradient-to-r from-primary to-secondary text-white py-3 rounded-xl font-bold shadow-md hover:shadow-lg hover:-translate-y-0.5 disabled:opacity-60 transition-all">
                   {editingId ? <><Save size={18} /> Update</> : <><Plus size={18} /> Create</>}
                 </button>
                 {editingId && (
-                  <button type="button" onClick={() => { setEditingId(null); setFormData({name:'', description:'', emoji_icon:'🍽️'}) }} className="px-4 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-colors">
+                  <button type="button" aria-label="Cancel editing" onClick={resetForm} className="px-4 py-3 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-colors">
                     <X size={18} />
                   </button>
                 )}
@@ -165,10 +200,10 @@ function CategoriesManagement() {
                               </div>
 
                               <div className="flex gap-2">
-                                <button onClick={() => handleEdit(category)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors">
+                                <button type="button" aria-label={`Edit ${category.name}`} onClick={() => handleEdit(category)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors">
                                   <Edit2 size={18} />
                                 </button>
-                                <button onClick={() => handleDelete(category._id)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors">
+                                <button type="button" aria-label={`Delete ${category.name}`} onClick={() => handleDelete(category)} className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition-colors">
                                   <Trash2 size={18} />
                                 </button>
                               </div>

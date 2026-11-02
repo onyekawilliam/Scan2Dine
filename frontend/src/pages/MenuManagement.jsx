@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Plus, LayoutGrid, List as ListIcon, MoreHorizontal, CheckCircle2, XCircle, X, Image as ImageIcon } from 'lucide-react';
+import { Search, Plus, LayoutGrid, List as ListIcon, Eye, EyeOff, CheckCircle2, XCircle, X, Trash2, AlertCircle, Image as ImageIcon } from 'lucide-react';
 import api from '../utils/api';
 
 import { useNavigate } from 'react-router-dom';
@@ -15,7 +15,19 @@ function MenuManagement() {
   const [isEditorOpen, setIsEditorOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [formData, setFormData] = useState({
-    name: '', category_id: '', description: '', price: '', emoji_icon: '🍔', allergens: '', dietary_tags: ''
+    name: '', category_id: '', description: '', price: '', emoji_icon: '🍔', allergens: '', dietary_tags: '', is_available: true
+  });
+  const [search, setSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('All');
+  const [formError, setFormError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const categoryIdOf = (item) => (typeof item.category_id === 'object' ? item.category_id?._id : item.category_id);
+
+  const filteredItems = items.filter((item) => {
+    const matchesSearch = !search.trim() || item.name.toLowerCase().includes(search.trim().toLowerCase());
+    const matchesCategory = categoryFilter === 'All' || categoryIdOf(item) === categoryFilter;
+    return matchesSearch && matchesCategory;
   });
 
   useEffect(() => {
@@ -46,8 +58,10 @@ function MenuManagement() {
         price: item.price,
         emoji_icon: item.emoji_icon || '🍔',
         allergens: item.allergens?.join(', ') || '',
-        dietary_tags: item.dietary_tags?.join(', ') || ''
+        dietary_tags: item.dietary_tags?.join(', ') || '',
+        is_available: item.is_available !== false
       });
+      setFormError('');
       setIsEditorOpen(true);
     } else {
       // If adding new item, navigate to dedicated page
@@ -55,37 +69,62 @@ function MenuManagement() {
     }
   };
 
+  const errorMessage = (err, fallback) =>
+    err.response?.data?.error?.message || err.response?.data?.message || fallback;
+
   const handleSave = async (e) => {
     e.preventDefault();
+    if (!editingItem || saving) return;
+    setSaving(true);
+    setFormError('');
     try {
+      // Sent in full (empty strings and empty lists included) so fields can be cleared.
       const payload = {
-        name: formData.name,
+        name: formData.name.trim(),
         category_id: formData.category_id,
-        price: parseFloat(formData.price)
+        price: parseFloat(formData.price),
+        description: formData.description.trim(),
+        emoji_icon: formData.emoji_icon.trim(),
+        allergens: formData.allergens.split(',').map(s => s.trim()).filter(Boolean),
+        dietary_tags: formData.dietary_tags.split(',').map(s => s.trim()).filter(Boolean),
+        is_available: formData.is_available,
       };
 
-      if (formData.description?.trim()) payload.description = formData.description.trim();
-      if (formData.emoji_icon?.trim()) payload.emoji_icon = formData.emoji_icon.trim();
-
-      const allergensArray = formData.allergens.split(',').map(s => s.trim()).filter(Boolean);
-      if (allergensArray.length > 0) payload.allergens = allergensArray;
-      
-      const dietaryArray = formData.dietary_tags.split(',').map(s => s.trim()).filter(Boolean);
-      if (dietaryArray.length > 0) payload.dietary_tags = dietaryArray;
-
-      if (editingItem) {
-        // Mock Update (PUT route not built yet)
-        setItems(items.map(i => i._id === editingItem ? { ...i, ...payload } : i));
-      } else {
-        const res = await api.post('/menu/items', payload);
-        if (res.data.success) {
-          setItems([...items, res.data.data.menuItem]);
-        }
+      const res = await api.put(`/menu/items/${editingItem}`, payload);
+      if (res.data.success) {
+        setItems(items.map(i => (i._id === editingItem ? res.data.data : i)));
+        setIsEditorOpen(false);
       }
+    } catch (err) {
+      setFormError(errorMessage(err, 'Could not save this item. Please try again.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!editingItem || saving) return;
+    if (!window.confirm('Delete this menu item? This cannot be undone.')) return;
+    setSaving(true);
+    setFormError('');
+    try {
+      await api.delete(`/menu/items/${editingItem}`);
+      setItems(items.filter(i => i._id !== editingItem));
       setIsEditorOpen(false);
     } catch (err) {
+      setFormError(errorMessage(err, 'Could not delete this item. Please try again.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Quick show/hide from the card, without opening the editor.
+  const toggleAvailability = async (item) => {
+    try {
+      const res = await api.put(`/menu/items/${item._id}`, { is_available: !item.is_available });
+      if (res.data.success) setItems(items.map(i => (i._id === item._id ? res.data.data : i)));
+    } catch (err) {
       console.error(err);
-      alert('Failed to save item. Check console.');
     }
   };
 
@@ -96,10 +135,10 @@ function MenuManagement() {
         <div className="flex flex-wrap gap-4 items-center flex-1">
           <div className="relative min-w-[250px]">
             <Search size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-            <input type="text" placeholder="Search menu items..." className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary outline-none" />
+            <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search menu items..." aria-label="Search menu items" className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary focus:border-primary outline-none" />
           </div>
-          
-          <select className="px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-700 outline-none focus:ring-2 focus:ring-primary">
+
+          <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} aria-label="Filter by category" className="px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl font-medium text-slate-700 outline-none focus:ring-2 focus:ring-primary">
             <option value="All">All Categories</option>
             {categories.map(c => <option key={c._id} value={c._id}>{c.name}</option>)}
           </select>
@@ -127,9 +166,14 @@ function MenuManagement() {
             <p className="text-slate-500 mb-6">Start building your beautiful digital menu today.</p>
             <button onClick={() => openEditor()} className="px-6 py-2.5 bg-primary text-white rounded-xl font-medium">Add First Item</button>
           </div>
+        ) : filteredItems.length === 0 ? (
+          <div className="text-center py-16 text-slate-500">
+            No items match your search.{' '}
+            <button type="button" onClick={() => { setSearch(''); setCategoryFilter('All'); }} className="font-semibold text-primary hover:underline">Clear filters</button>
+          </div>
         ) : viewMode === 'grid' ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
-            {items.map(item => (
+            {filteredItems.map(item => (
               <div key={item._id} className="bg-white/95 backdrop-blur-xl rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.05)] border border-slate-100 overflow-hidden hover:-translate-y-1 hover:shadow-xl transition-all duration-300 group cursor-pointer" onClick={() => openEditor(item)}>
                 <div className="h-40 bg-slate-50 border-b border-slate-100 flex items-center justify-center text-6xl relative">
                   {item.emoji_icon || '🍔'}
@@ -144,7 +188,15 @@ function MenuManagement() {
                   <p className="text-slate-500 text-sm line-clamp-2 mb-4 h-10">{item.description}</p>
                   <div className="flex justify-between items-center mt-auto">
                     <span className="font-bold text-green-600 text-lg">${item.price.toFixed(2)}</span>
-                    <button className="text-slate-400 hover:text-primary"><MoreHorizontal size={20} /></button>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); toggleAvailability(item); }}
+                      aria-label={item.is_available ? `Hide ${item.name} from the menu` : `Show ${item.name} on the menu`}
+                      title={item.is_available ? 'Hide from menu' : 'Show on menu'}
+                      className="text-slate-400 hover:text-primary"
+                    >
+                      {item.is_available ? <Eye size={20} /> : <EyeOff size={20} />}
+                    </button>
                   </div>
                 </div>
               </div>
@@ -163,14 +215,14 @@ function MenuManagement() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {items.map(item => (
+                {filteredItems.map(item => (
                   <tr key={item._id} onClick={() => openEditor(item)} className="hover:bg-slate-50/50 cursor-pointer transition-colors">
                     <td className="p-4 pl-6 text-2xl">{item.emoji_icon || '🍔'}</td>
                     <td className="p-4 font-bold text-slate-800">{item.name}</td>
                     <td className="p-4 text-sm text-slate-600">{typeof item.category_id === 'object' ? item.category_id.name : item.category_id}</td>
                     <td className="p-4 font-bold text-green-600">${item.price.toFixed(2)}</td>
                     <td className="p-4">
-                      {item.is_available ? <span className="text-xs font-bold px-2 py-1 bg-green-100 text-green-700 rounded-full">Available</span> : <span className="text-xs font-bold px-2 py-1 bg-red-100 text-red-700 rounded-full">Hidden</span>}
+                      {item.is_available ? <span className="text-xs font-bold px-2 py-1 bg-green-100 text-green-700 rounded-full">Available</span> : <span className="text-xs font-bold px-2 py-1 bg-red-100 text-red-700 rounded-full">Unavailable</span>}
                     </td>
                   </tr>
                 ))}
@@ -230,11 +282,31 @@ function MenuManagement() {
               <input value={formData.dietary_tags} onChange={e=>setFormData({...formData, dietary_tags: e.target.value})} type="text" placeholder="e.g. Vegan, Halal, Spicy" className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-primary outline-none" />
             </div>
           </div>
+
+          <div className="space-y-4">
+            <h3 className="font-semibold text-slate-800 border-b pb-2">Availability</h3>
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" checked={formData.is_available} onChange={e => setFormData({ ...formData, is_available: e.target.checked })} className="mt-1 size-4 rounded border-slate-300 text-primary focus:ring-primary" />
+              <span>
+                <span className="block text-sm font-medium text-slate-700">Available to order</span>
+                <span className="block text-xs text-slate-500">Turn this off when the item is sold out. Customers will see it but cannot order it.</span>
+              </span>
+            </label>
+          </div>
+
+          {formError && (
+            <div role="alert" className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              <AlertCircle size={16} className="mt-0.5 shrink-0" /> {formError}
+            </div>
+          )}
         </form>
 
-        <div className="p-6 border-t border-slate-100 bg-slate-50/50">
-          <button onClick={handleSave} className="w-full bg-gradient-to-r from-primary to-secondary text-white py-3.5 rounded-xl font-bold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all">
-            Save Item
+        <div className="p-6 border-t border-slate-100 bg-slate-50/50 flex gap-3">
+          <button type="button" onClick={handleDelete} disabled={saving} aria-label="Delete item" className="px-4 rounded-xl border border-red-200 bg-white text-red-600 hover:bg-red-50 disabled:opacity-60 transition-colors">
+            <Trash2 size={18} />
+          </button>
+          <button onClick={handleSave} disabled={saving} className="flex-1 bg-gradient-to-r from-primary to-secondary text-white py-3.5 rounded-xl font-bold shadow-lg hover:shadow-xl hover:-translate-y-0.5 disabled:opacity-60 transition-all">
+            {saving ? 'Saving…' : 'Save Item'}
           </button>
         </div>
       </div>

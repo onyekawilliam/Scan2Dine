@@ -4,7 +4,7 @@ const restaurantSchema = new mongoose.Schema(
   {
     restaurant_name: { type: String, required: true, index: true },
     owner_name: { type: String, required: true },
-    email: { type: String, unique: true, required: true, index: true },
+    email: { type: String, unique: true, required: true, index: true, lowercase: true, trim: true },
     password_hash: { type: String, required: true },
     phone: { type: String },
     slug: { type: String, unique: true, index: true },

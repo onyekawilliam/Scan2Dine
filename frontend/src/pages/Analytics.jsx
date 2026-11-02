@@ -30,16 +30,12 @@ function Analytics() {
 
   if (loading) return <div className="p-12 text-center text-slate-500">Loading Analytics...</div>;
 
-  // Mock data for charts since backend only returns aggregated totals so far
-  const mockRevenueData = [
-    { name: 'Mon', revenue: 4000, orders: 240 },
-    { name: 'Tue', revenue: 3000, orders: 139 },
-    { name: 'Wed', revenue: 2000, orders: 980 },
-    { name: 'Thu', revenue: 2780, orders: 390 },
-    { name: 'Fri', revenue: 1890, orders: 480 },
-    { name: 'Sat', revenue: 2390, orders: 380 },
-    { name: 'Sun', revenue: 3490, orders: 430 },
-  ];
+  // Real revenue and order counts for the last 7 days (days are in UTC).
+  const revenueData = (stats?.daily || []).map((d) => ({
+    name: new Date(`${d.date}T00:00:00Z`).toLocaleDateString(undefined, { weekday: 'short', timeZone: 'UTC' }),
+    revenue: d.revenue,
+    orders: d.orders,
+  }));
 
   const pieData = Object.keys(stats?.orders_by_status || {}).map(key => ({
     name: key,
@@ -84,19 +80,19 @@ function Analytics() {
 
       {/* Metric Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <MetricCard title="Total Revenue" value={(stats?.total_revenue || 0).toFixed(2)} prefix="$" icon={DollarSign} trend={12.5} />
-        <MetricCard title="Total Orders" value={stats?.total_orders || 0} icon={ShoppingBag} trend={8.2} />
-        <MetricCard title="Avg. Order Value" value={((stats?.total_revenue || 0) / (stats?.total_orders || 1)).toFixed(2)} prefix="$" icon={TrendingUp} trend={-2.4} />
-        <MetricCard title="Active Menu Items" value={stats?.menu_items_count || 0} icon={Users} trend={0} />
+        <MetricCard title="Total Revenue" value={(stats?.total_revenue || 0).toFixed(2)} prefix="$" icon={DollarSign} />
+        <MetricCard title="Total Orders" value={stats?.total_orders || 0} icon={ShoppingBag} />
+        <MetricCard title="Avg. Order Value" value={((stats?.total_revenue || 0) / (stats?.total_orders || 1)).toFixed(2)} prefix="$" icon={TrendingUp} />
+        <MetricCard title="Available Menu Items" value={stats?.menu_items_count || 0} icon={Users} />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Main Chart */}
         <div className="lg:col-span-2 bg-white/95 backdrop-blur-xl rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.05)] border border-slate-100 p-6">
-          <h3 className="text-lg font-bold text-slate-800 mb-6">Revenue Trend</h3>
+          <h3 className="text-lg font-bold text-slate-800 mb-6">Revenue, last 7 days</h3>
           <div className="h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={mockRevenueData}>
+              <AreaChart data={revenueData}>
                 <defs>
                   <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#667eea" stopOpacity={0.8}/>

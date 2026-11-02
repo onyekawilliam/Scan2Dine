@@ -26,18 +26,20 @@ function KitchenDisplay() {
   useEffect(() => {
     fetchOrders();
 
-    const socket = io(SOCKET_URL);
-    const user = JSON.parse(localStorage.getItem('user'));
-    
-    if (user && user.id) {
-      socket.emit('join_restaurant', user.id);
-      socket.on('new_order', (order) => {
-        setOrders(prev => [...prev, order]);
-        // Play sound ping here
-        const audio = new Audio('/ping.mp3'); // Assuming ping.mp3 is in public folder
-        audio.play().catch(e => console.log('Audio play failed', e));
-      });
-    }
+    // The server only lets a socket with a valid staff token join its own restaurant's room.
+    const socket = io(SOCKET_URL, { auth: { token: localStorage.getItem('token') } });
+    socket.on('connect', () => socket.emit('join_restaurant'));
+
+    socket.on('new_order', (order) => {
+      setOrders(prev => (prev.some(o => o._id === order._id) ? prev : [...prev, order]));
+      // Play sound ping here
+      const audio = new Audio('/ping.mp3'); // Assuming ping.mp3 is in public folder
+      audio.play().catch(e => console.log('Audio play failed', e));
+    });
+
+    socket.on('order_updated', ({ id, status }) => {
+      setOrders(prev => prev.map(o => (o._id === id ? { ...o, status, updatedAt: new Date().toISOString() } : o)));
+    });
 
     // Auto refresh local states every 10 seconds (for timers)
     const interval = setInterval(() => {
@@ -53,9 +55,11 @@ function KitchenDisplay() {
   const updateOrderStatus = async (id, status) => {
     try {
       await api.put(`/orders/${id}/status`, { status });
-      setOrders(orders.map(o => o._id === id ? { ...o, status } : o));
+      setOrders(prev => prev.map(o => (o._id === id ? { ...o, status, updatedAt: new Date().toISOString() } : o)));
     } catch (err) {
       console.error(err);
+      // The order was probably changed from another device: show the real state.
+      fetchOrders();
     }
   };
 

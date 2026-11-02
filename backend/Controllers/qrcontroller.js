@@ -1,32 +1,35 @@
+const QRCode = require("qrcode");
 const Restaurant = require("../Models/restaurantmodel");
+const { fail, serverError, notFound } = require("../utils/http");
+
+// The public address of the customer-facing site: the first CLIENT_URL entry, else the caller's origin.
+const clientBaseUrl = (req) => {
+  const configured = (process.env.CLIENT_URL || "").split(",")[0].trim();
+  return (configured || req.get("origin") || "").replace(/\/+$/, "");
+};
 
 // @route   GET /api/qr/generate
 const generateQR = async (req, res) => {
   try {
-    const restaurant = await Restaurant.findById(req.restaurant.id);
-    
-    if (!restaurant) {
-      return res.status(404).json({ success: false, message: "Restaurant not found" });
+    const restaurant = await Restaurant.findById(req.restaurant.id).select("slug");
+    if (!restaurant) return notFound(res, "Restaurant");
+
+    const base = clientBaseUrl(req);
+    if (!base) {
+      return fail(res, 500, "NOT_CONFIGURED", "The site address is not configured. Set CLIENT_URL on the server.");
     }
 
-    const menuUrl = `https://scan2dine.com/menu/${restaurant.slug}`;
-    
-    // In a real scenario, use qrcode library to generate data URL and upload to S3.
-    // For now, we return mock URLs as requested.
-    const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(menuUrl)}`;
+    // Generated locally: no third-party service sees your menu links, and it works offline.
+    const menuUrl = `${base}/menu/${restaurant.slug}`;
+    const dataUrl = await QRCode.toDataURL(menuUrl, { width: 600, margin: 2, errorCorrectionLevel: "M" });
 
     res.json({
       success: true,
-      data: {
-        qr_code_url: qrCodeUrl,
-        menu_url: menuUrl
-      },
+      data: { menu_url: menuUrl, qr_code_url: dataUrl, qr_code_data_url: dataUrl },
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    serverError(res, error);
   }
 };
 
-module.exports = {
-  generateQR,
-};
+module.exports = { generateQR };

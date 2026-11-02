@@ -28,17 +28,20 @@ function LiveOrders() {
     fetchOrders();
 
     // WebSocket connection for real-time orders
-    const socket = io(SOCKET_URL);
-    const user = JSON.parse(localStorage.getItem('user'));
-    
-    if (user && user.id) {
-      socket.emit('join_restaurant', user.id);
-      
-      socket.on('new_order', (order) => {
-        setOrders(prev => [order, ...prev]);
-        // Sound notification could go here
-      });
-    }
+    // The server only lets a socket with a valid staff token join its own restaurant's room.
+    const socket = io(SOCKET_URL, { auth: { token: localStorage.getItem('token') } });
+    socket.on('connect', () => socket.emit('join_restaurant'));
+
+    socket.on('new_order', (order) => {
+      setOrders(prev => (prev.some(o => o._id === order._id) ? prev : [order, ...prev]));
+      // Sound notification could go here
+    });
+
+    // Keeps several staff devices in sync when one of them changes an order.
+    socket.on('order_updated', ({ id, status }) => {
+      setOrders(prev => prev.map(o => (o._id === id ? { ...o, status } : o)));
+      setSelectedOrder(prev => (prev && prev._id === id ? { ...prev, status } : prev));
+    });
 
     return () => socket.disconnect();
   }, []);
@@ -46,12 +49,12 @@ function LiveOrders() {
   const updateOrderStatus = async (id, status) => {
     try {
       await api.put(`/orders/${id}/status`, { status });
-      setOrders(orders.map(o => o._id === id ? { ...o, status } : o));
-      if (selectedOrder && selectedOrder._id === id) {
-        setSelectedOrder({ ...selectedOrder, status });
-      }
+      setOrders(prev => prev.map(o => (o._id === id ? { ...o, status } : o)));
+      setSelectedOrder(prev => (prev && prev._id === id ? { ...prev, status } : prev));
     } catch (err) {
       console.error(err);
+      // The order was probably changed from another device: show the real state.
+      fetchOrders();
     }
   };
 

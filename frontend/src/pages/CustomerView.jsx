@@ -20,6 +20,7 @@ const CustomerView = () => {
   // Checkout State
   const [tableNumber, setTableNumber] = useState('');
   const [customerName, setCustomerName] = useState('');
+  const [orderError, setOrderError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -76,6 +77,7 @@ const CustomerView = () => {
 
   const handleCheckout = async () => {
     setSubmitting(true);
+    setOrderError('');
     try {
       const orderItems = cart.map(i => ({ menu_item_id: i._id, quantity: i.qty }));
       const payload = {
@@ -94,7 +96,11 @@ const CustomerView = () => {
       }
     } catch (err) {
       console.error(err);
-      alert('Failed to place order.');
+      setOrderError(
+        err.response?.data?.error?.message ||
+          err.response?.data?.message ||
+          'We could not place your order. Please check your connection and try again.'
+      );
     } finally {
       setSubmitting(false);
     }
@@ -118,11 +124,8 @@ const CustomerView = () => {
          <div className="absolute top-0 right-0 w-64 h-64 bg-accent/20 rounded-full blur-[80px]"></div>
          <div className="relative z-10 animate-fade-in-up">
            <h1 className="text-3xl font-extrabold mb-1">{restaurant.restaurant_name}</h1>
-           <p className="text-white/80 font-medium mb-4">Experience authentic flavors.</p>
-           <div className="inline-flex items-center gap-1 bg-white/20 backdrop-blur-md px-4 py-1.5 rounded-full text-sm font-semibold">
-             <Star className="fill-accent text-accent" size={16} /><Star className="fill-accent text-accent" size={16} /><Star className="fill-accent text-accent" size={16} /><Star className="fill-accent text-accent" size={16} /><Star className="text-accent" size={16} />
-             <span className="ml-1 opacity-90">(128 Reviews)</span>
-           </div>
+           {restaurant.description && <p className="text-white/80 font-medium mb-4 max-w-md mx-auto">{restaurant.description}</p>}
+           {restaurant.address && <p className="text-white/70 text-sm">{restaurant.address}</p>}
          </div>
       </header>
 
@@ -219,6 +222,9 @@ const CustomerView = () => {
              <input type="text" value={tableNumber} onChange={e => setTableNumber(e.target.value)} placeholder="Table # (if dine-in)" className="w-1/3 px-4 py-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-primary" />
              <input type="text" value={customerName} onChange={e => setCustomerName(e.target.value)} placeholder="Your Name" className="flex-1 px-4 py-3 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-primary" />
            </div>
+           {orderError && (
+             <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{orderError}</div>
+           )}
            <div className="flex justify-between items-center pt-2">
              <span className="text-slate-500 font-medium">Total</span>
              <span className="text-3xl font-extrabold text-slate-800">${cartTotal.toFixed(2)}</span>
